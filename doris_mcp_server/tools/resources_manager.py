@@ -311,7 +311,6 @@ class DorisResourcesManager:
         view_query = """
         SELECT
             table_name,
-            table_comment,
             view_definition
         FROM information_schema.views
         WHERE table_schema = DATABASE()
@@ -327,7 +326,7 @@ class DorisResourcesManager:
 
         schema_info = {
             "view_name": view_info["table_name"],
-            "comment": view_info.get("table_comment"),
+            # "comment": view_info.get("table_comment"),
             "definition": view_info.get("view_definition"),
         }
 

@@ -1,0 +1,22 @@
+{
+    "mcpServers": {
+      "doris-http": {
+        "command": "uvx",
+        "args": [
+          "--from",
+          "doris-mcp-server",
+          "doris-mcp-server",
+          "--transport",
+          "http"
+        ],
+        "env": {
+          "DORIS_HOST": "36.212.156.218",
+          "DORIS_PORT": "9030",
+          "DORIS_USER": "root",
+          "DORIS_PASSWORD": "MyDoris2025",
+          "DORIS_DATABASE": "dw_power",
+          "LOG_LEVEL": "INFO"
+        }
+      }
+    }
+  }

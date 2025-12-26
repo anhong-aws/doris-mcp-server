@@ -325,6 +325,106 @@ Please provide complete monitoring solution and implementation recommendations."
             category="monitoring",
         )
 
+        # Energy consumption analysis template with detailed schema description
+        templates["energy_consumption_analysis"] = PromptTemplate(
+            name="energy_consumption_analysis",
+            description="能源消耗分析模板，用于分析能源使用趋势、成本和效率，并提供BI和仪表盘建议",
+            template="""请帮助我分析能源消耗数据，具体需求如下：
+
+分析目标：{analysis_target}
+时间范围：{time_range}
+时间维度：{time_dimension}
+{business_dimension_filter}
+
+请生成SQL查询以分析以下内容：
+1. 按{time_dimension}和能源类型的能源消耗趋势
+2. 不同生产层级的能源成本比较
+3. 按工序的能源效率评估
+4. 能源消耗中的异常检测
+5. 多维度成本分布分析
+
+数据表结构参考：
+- 基于时间维度的可用表：
+  - 日表：ads_energy_consume_day
+  - 小时表：ads_energy_consume_hour
+  - 分钟表：ads_energy_consume_minute
+  - 月表：ads_energy_consume_mon
+  - 季度表：ads_energy_consume_qua
+  - 年表：ads_energy_consume_year
+- 关键字段：
+  - summary_time (datetime)：采集时间
+  - process_code (varchar)：生产工序
+  - produce_level_code (varchar)：生产层级
+  - energy_type_code (varchar)：能源类型
+  - meter_code (varchar)：计量器具编号（表计编号）
+  - analysis_code (varchar)：分析指标
+  - field_name (varchar)：参数名称
+  - produce_level_name (varchar)：生产层级名称
+  - energy_type_name (varchar)：能源类型名称
+  - metering_name (varchar)：计量器具名称
+  - analysis_name (varchar)：分析指标名称
+  - process_name (varchar)：生产工序名称
+  - product_name (varchar)：产品名称
+  - meter_value (decimal)：实物量
+  - use_coefficient (decimal)：使用系数
+  - coefficient_value (decimal)：折标量
+
+执行要求：
+- 生成的SQL查询必须使用`mcp.tools.exec_query`函数执行。
+- 确保SQL经过性能优化并符合数据库架构。
+
+在获取查询结果后，请执行以下BI分析和仪表盘生成：
+
+BI分析：
+1. 汇总和总结关键指标（例如，总能源消耗、成本、效率）。
+2. 识别数据中的趋势、模式和异常。
+3. 跨维度进行比较分析（例如，能源类型、生产层级、区域）。
+4. 基于分析生成可操作的洞察和建议。
+
+仪表盘设计：
+1. 关键可视化：
+   - 能源消耗趋势的折线图。
+   - 不同生产层级成本比较的柱状图。
+   - 按工序的能源效率热力图。
+   - 异常检测的散点图。
+2. 交互式过滤器：
+   - 时间范围（例如，按日、按月、按年）。
+   - 业务维度（例如，工序、能源类型、区域）。
+3. 关键绩效指标（KPIs）：
+   - 总能源消耗。
+   - 总成本。
+   - 能源效率指标。
+4. 布局和可用性：
+   - 确保布局清晰直观。
+   - 突出关键洞察和异常。
+   - 提供详细分析的下钻功能。
+
+请确保BI分析和仪表盘设计具有可操作性、视觉吸引力，并与业务目标保持一致。""",
+            arguments=[
+                PromptArgument(
+                    name="analysis_target",
+                    description="分析目标，例如“能源趋势”、“成本比较”、“效率评估”",
+                    required=True,
+                ),
+                PromptArgument(
+                    name="time_range",
+                    description="分析的时间范围，例如“去年”、“2025年第一季度”",
+                    required=True,
+                ),
+                PromptArgument(
+                    name="time_dimension",
+                    description="分析的时间维度，例如“按日”、“按小时”、“按月”、“按年”",
+                    required=True,
+                ),
+                PromptArgument(
+                    name="business_dimension_filter",
+                    description="业务维度过滤条件，例如“process_name = 钢铁生产”",
+                    required=False,
+                ),
+            ],
+            category="energy_analysis",
+        )
+        # Add more templates as needed...
         return templates
 
     async def list_prompts(self) -> list[Prompt]:

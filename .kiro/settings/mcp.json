@@ -1,0 +1,24 @@
+{
+  "mcpServers": {
+
+		"doris-mcp": {
+			"descriptions": "",
+			"icons": "🐸",
+			"autoApprove": [
+				"all"
+			],
+			"type": "http",
+			"command": "",
+			"args": [],
+			"env": {},
+			"baseUrl": "http://127.0.0.1:3000/mcp",
+			"customHeaders": {},
+			"customNpmRegistry": ""
+		},
+    "doris-http": {
+      "url": "http://127.0.0.1:3000/mcp",
+      "disabled": false,
+      "autoApprove": []
+    }
+  }
+}
