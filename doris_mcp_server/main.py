@@ -206,7 +206,7 @@ if not _import_mcp_with_compatibility():
         "Supported versions: 1.8.x, 1.9.x"
     )
 
-from .tools.tools_manager import DorisToolsManager
+from .tools.bi_tools_manager import DorisToolsManager
 from .tools.prompts_manager import DorisPromptsManager
 from .tools.resources_manager import DorisResourcesManager
 from .utils.config import DorisConfig

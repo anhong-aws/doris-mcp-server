@@ -1,3 +1,4 @@
+# 本机单独启动
 export DORIS_HOST=36.212.156.218
 export DORIS_PORT=9030
 export DORIS_USER=root
