@@ -14,7 +14,7 @@ from mcp.types import Tool
 from ..utils.db import DorisConnectionManager
 from ..utils.query_executor import DorisQueryExecutor
 from ..utils.monitoring_tools import DorisMonitoringTools
-from ..utils.schema_extractor import MetadataExtractor
+from ..utils.bi_schema_extractor import MetadataExtractor
 from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -107,43 +107,6 @@ class DorisToolsManager:
                     },
                 },
             ),
-            Tool(
-                name="get_db_list",
-                description="""[Function Description]: Get a list of all database names on the server.
-
-[Parameter Content]:
-
-- catalog_name (string) [Optional] - Target catalog name for federation queries, defaults to current catalog
-""",
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "catalog_name": {"type": "string", "description": "Catalog name"},
-                    },
-                },
-            ),
-            Tool(
-                name="get_table_comment",
-                description="""[Function Description]: Get the comment information for the specified table.
-
-[Parameter Content]:
-
-- table_name (string) [Required] - Name of the table to query
-
-- db_name (string) [Optional] - Target database name, defaults to the current database
-
-- catalog_name (string) [Optional] - Target catalog name for federation queries, defaults to current catalog
-""",
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "table_name": {"type": "string", "description": "Table name"},
-                        "db_name": {"type": "string", "description": "Database name"},
-                        "catalog_name": {"type": "string", "description": "Catalog name"},
-                    },
-                    "required": ["table_name"],
-                },
-            ),
         ]
         
         return tools
@@ -162,10 +125,6 @@ class DorisToolsManager:
                 result = await self._get_table_schema_tool(arguments)
             elif name == "get_db_table_list":
                 result = await self._get_db_table_list_tool(arguments)
-            elif name == "get_db_list":
-                result = await self._get_db_list_tool(arguments)
-            elif name == "get_table_comment":
-                result = await self._get_table_comment_tool(arguments)
             else:
                 raise ValueError(f"Unknown tool: {name}")
             
@@ -224,21 +183,4 @@ class DorisToolsManager:
         # Delegate to metadata extractor for processing
         return await self.metadata_extractor.get_db_table_list_for_mcp(db_name, catalog_name)
     
-    async def _get_db_list_tool(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
-        """Get database list tool routing"""
-        catalog_name = arguments.get("catalog_name")
-        
-        # Delegate to metadata extractor for processing
-        return await self.metadata_extractor.get_db_list_for_mcp(catalog_name)
-    
-    async def _get_table_comment_tool(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
-        """Get table comment tool routing"""
-        table_name = arguments.get("table_name")
-        db_name = arguments.get("db_name")
-        catalog_name = arguments.get("catalog_name")
-        
-        # Delegate to metadata extractor for processing
-        return await self.metadata_extractor.get_table_comment_for_mcp(
-            table_name, db_name, catalog_name
-        )
     

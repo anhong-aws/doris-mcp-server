@@ -26,6 +26,21 @@ YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m' # No Color
 
+# Parse command line arguments
+DEBUG_MODE=false
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --debug)
+            DEBUG_MODE=true
+            shift
+            ;;
+        *)
+            echo -e "${YELLOW}Warning: Unknown argument $1${NC}"
+            shift
+            ;;
+    esac
+done
+
 echo -e "${GREEN}========== Doris MCP Server Start Script (HTTP Mode) ==========${NC}"
 
 # Check virtual environment
@@ -86,7 +101,22 @@ echo -e "${YELLOW}Workers: ${WORKERS}${NC}"
 echo -e "${YELLOW}Use Ctrl+C to stop the service${NC}"
 
 # Start the server in HTTP mode (Streamable HTTP)
-python -m doris_mcp_server.main --transport http --host ${MCP_HOST} --port ${SERVER_PORT} --workers ${WORKERS}
+if [ "$DEBUG_MODE" = true ]; then
+    echo -e "${GREEN}Starting MCP server in DEBUG mode...${NC}"
+    echo -e "${YELLOW}Waiting for debugger connection on port 5678...${NC}"
+    
+    # Check if debugpy is installed
+    if ! python -c "import debugpy" 2>/dev/null; then
+        echo -e "${YELLOW}debugpy not found, installing...${NC}"
+        pip install debugpy
+    fi
+    
+    # Start the server with debugpy
+    python -m debugpy --listen 0.0.0.0:5678 --wait-for-client -m doris_mcp_server.main --transport http --host ${MCP_HOST} --port ${SERVER_PORT} --workers ${WORKERS}
+else
+    # Start the server normally
+    python -m doris_mcp_server.main --transport http --host ${MCP_HOST} --port ${SERVER_PORT} --workers ${WORKERS}
+fi
 
 # Check exit status
 if [ $? -ne 0 ]; then
@@ -98,4 +128,4 @@ fi
 echo -e "${YELLOW}Tip: If the page displays abnormally, please clear your browser cache or use incognito mode${NC}"
 echo -e "${YELLOW}Chrome browser clear cache shortcut: Ctrl+Shift+Del (Windows) or Cmd+Shift+Del (Mac)${NC}"
 echo -e "${CYAN}For testing HTTP endpoints, you can use:${NC}"
-echo -e "${CYAN}  curl -X POST http://localhost:${SERVER_PORT}/mcp -H 'Content-Type: application/json' -d '{\"method\":\"tools/list\"}'${NC}" 
+echo -e "${CYAN}  curl -X POST http://localhost:${SERVER_PORT}/mcp -H 'Content-Type: application/json' -d '{\"method\":\"tools/list\"}'${NC}"

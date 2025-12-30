@@ -2,7 +2,7 @@
 export DORIS_HOST=36.212.156.218
 export DORIS_PORT=9030
 export DORIS_USER=root
-export DORIS_PASSWORD=MyDoris2025
+export DORIS_PASSWORD=MyDoris202511
 export DORIS_DATABASE=dw_power
 
 export LOG_LEVEL=DEBUG

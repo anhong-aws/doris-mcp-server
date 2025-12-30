@@ -222,7 +222,6 @@ class DorisResourcesManager:
         views_query = """
         SELECT
             table_name,
-            table_comment,
             view_definition
         FROM information_schema.views
         WHERE table_schema = DATABASE()
@@ -236,7 +235,7 @@ class DorisResourcesManager:
         for row in result.data:
             view = ViewMetadata(
                 name=row["table_name"],
-                comment=row.get("table_comment"),
+                # comment=row.get("table_comment"),
                 definition=row.get("view_definition"),
             )
             views.append(view)
