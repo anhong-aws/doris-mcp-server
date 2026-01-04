@@ -1429,6 +1429,51 @@ class MetadataExtractor:
         except Exception as e:
             logger.error(f"Failed to get table list: {e}")
             return []
+    async def get_bi_database_tables_async(self, db_name: str = None, catalog_name: str = None) -> List[str]:
+        """Asynchronously get table list in database"""
+        try:
+            effective_catalog = catalog_name or self.catalog_name
+            effective_db = db_name or self.db_name
+            
+            # SECURITY FIX: Validate identifiers
+            try:
+                if effective_db:
+                    validate_identifier(effective_db, "database name")
+                if effective_catalog and effective_catalog != "internal":
+                    validate_identifier(effective_catalog, "catalog name")
+            except SQLSecurityError as e:
+                logger.warning(f"Invalid identifier rejected: {e}")
+                return []
+            
+            query = f"""
+            SELECT 
+                TABLE_NAME AS `TABLE_NAME`,
+                TABLE_COMMENT AS `TABLE_COMMENT`  
+            FROM 
+                information_schema.tables 
+            WHERE 
+                TABLE_SCHEMA = '{effective_db}' 
+                AND TABLE_TYPE = 'BASE TABLE'
+            """
+            result = await self._execute_query_with_catalog_async(query, effective_db, effective_catalog)
+
+            
+            if not result:
+                return []
+            
+            # Extract table names
+            tables = []
+            for row in result:
+                if isinstance(row, dict):
+                    tables.append({
+                        'table_name': row.get('TABLE_NAME', ''),
+                        'table_comment': row.get('TABLE_COMMENT', '')
+                    })
+            return tables
+            
+        except Exception as e:
+            logger.error(f"Failed to get table list: {e}")
+            return []
 
     async def get_catalog_list_async(self) -> List[str]:
         """Asynchronously get catalog list"""
@@ -1831,7 +1876,7 @@ class MetadataExtractor:
                 )
         
         try:
-            tables = await self.get_database_tables_async(db_name=db_name, catalog_name=catalog_name)
+            tables = await self.get_bi_database_tables_async(db_name=db_name, catalog_name=catalog_name)
             return self._format_response(success=True, result=tables)
         except Exception as e:
             logger.error(f"Failed to get database table list: {str(e)}", exc_info=True)
