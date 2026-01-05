@@ -77,14 +77,12 @@ class DorisToolsManager:
 
 - db_name (string) [Optional] - Target database name, defaults to the current database
 
-- catalog_name (string) [Optional] - Target catalog name for federation queries, defaults to current catalog
 """,
                 inputSchema={
                     "type": "object",
                     "properties": {
                         "table_name": {"type": "string", "description": "Table name"},
                         "db_name": {"type": "string", "description": "Database name"},
-                        "catalog_name": {"type": "string", "description": "Catalog name"},
                     },
                     "required": ["table_name"],
                 },
@@ -96,14 +94,11 @@ class DorisToolsManager:
 [Parameter Content]:
 
 - db_name (string) [Optional] - Target database name, defaults to the current database
-
-- catalog_name (string) [Optional] - Target catalog name for federation queries, defaults to current catalog
 """,
                 inputSchema={
                     "type": "object",
                     "properties": {
                         "db_name": {"type": "string", "description": "Database name"},
-                        "catalog_name": {"type": "string", "description": "Catalog name"},
                     },
                 },
             ),
@@ -168,19 +163,17 @@ class DorisToolsManager:
         """Get table schema tool routing"""
         table_name = arguments.get("table_name")
         db_name = arguments.get("db_name")
-        catalog_name = arguments.get("catalog_name")
         
         # Delegate to metadata extractor for processing
         return await self.metadata_extractor.get_table_schema_for_mcp(
-            table_name, db_name, catalog_name
+            table_name, db_name
         )
     
     async def _get_db_table_list_tool(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
         """Get database table list tool routing"""
         db_name = arguments.get("db_name")
-        catalog_name = arguments.get("catalog_name")
         
         # Delegate to metadata extractor for processing
-        return await self.metadata_extractor.get_db_table_list_for_mcp(db_name, catalog_name)
+        return await self.metadata_extractor.get_db_table_list_for_mcp(db_name)
     
     

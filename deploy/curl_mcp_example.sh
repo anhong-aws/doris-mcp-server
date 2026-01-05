@@ -41,7 +41,20 @@ TOOLS_RESPONSE=$(curl -s -i -X POST $MCP_URL \
 echo -e "\n=== Tools List Response (Headers + Body) ==="
 echo "$TOOLS_RESPONSE"
 
-# Step 3: Call exec_query tool to run a SQL query
+# Step 3: Call show tables list tool to run a SQL query
+echo -e "\n3. Calling show tables list tool to run 'SHOW DATABASES'..."
+QUERY_RESPONSE=$(curl -s -i -X POST $MCP_URL \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -H "mcp-session-id: $SESSION_ID" \
+  -d '{"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "get_db_table_list", "arguments": {"db_name": "dw_power"}}}'
+)
+
+# Print full response with headers
+echo -e "\n=== exec_query Response (Headers + Body) ==="
+echo "$QUERY_RESPONSE"
+
+# Step 4: Call exec_query tool to run a SQL query
 echo -e "\n3. Calling exec_query tool to run 'SHOW DATABASES'..."
 QUERY_RESPONSE=$(curl -s -i -X POST $MCP_URL \
   -H "Content-Type: application/json" \
