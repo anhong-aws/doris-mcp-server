@@ -570,6 +570,65 @@ class DorisServer:
             async def token_management(request):
                 return await token_handlers.handle_management_page(request)
             
+            # Cache management endpoints
+            from .utils.cache_manager import DorisCacheManager
+            cache_manager = DorisCacheManager(self.tools_manager.metadata_extractor)
+            
+            async def cache_details(request):
+                """Get detailed cache information"""
+                include_values = request.query_params.get("include_values", "false").lower() == "true"
+                result = cache_manager.get_cache_details(include_values=include_values)
+                return JSONResponse(result)
+            
+            async def cache_statistics(request):
+                """Get cache statistics"""
+                result = cache_manager.get_cache_statistics()
+                return JSONResponse(result)
+            
+            async def cache_clear(request):
+                """Clear cache entries"""
+                cache_type = request.query_params.get("cache_type", "expired")
+                specific_keys = request.query_params.getlist("specific_keys")
+                
+                # Handle POST request with JSON body
+                if request.method == "POST":
+                    try:
+                        body = await request.json()
+                        cache_type = body.get("cache_type", cache_type)
+                        specific_keys = body.get("specific_keys", specific_keys)
+                    except Exception:
+                        pass  # Use query params if JSON parsing fails
+                
+                result = cache_manager.clear_cache(
+                    cache_type=cache_type if cache_type != "None" else None,
+                    specific_keys=specific_keys if specific_keys else None
+                )
+                return JSONResponse(result)
+            
+            async def cache_refresh_entry(request):
+                """Refresh a specific cache entry"""
+                cache_key = request.query_params.get("cache_key")
+                if not cache_key:
+                    return JSONResponse({
+                        "success": False,
+                        "error": "cache_key parameter is required"
+                    }, status_code=400)
+                
+                result = cache_manager.refresh_cache_entry(cache_key)
+                return JSONResponse(result)
+            
+            async def cache_search_keys(request):
+                """Search for cache keys"""
+                pattern = request.query_params.get("pattern")
+                if not pattern:
+                    return JSONResponse({
+                        "success": False,
+                        "error": "pattern parameter is required"
+                    }, status_code=400)
+                
+                result = cache_manager.search_cache_keys(pattern)
+                return JSONResponse(result)
+            
             # Lifecycle manager - simplified since we manage session_manager externally
             @contextlib.asynccontextmanager
             async def lifespan(app: Starlette) -> AsyncIterator[None]:
@@ -597,6 +656,12 @@ class DorisServer:
                     Route("/token/stats", token_stats, methods=["GET"]),
                     Route("/token/cleanup", token_cleanup, methods=["GET", "POST"]),
                     Route("/token/management", token_management, methods=["GET"]),
+                    # Cache management endpoints
+                    Route("/cache/details", cache_details, methods=["GET"]),
+                    Route("/cache/statistics", cache_statistics, methods=["GET"]),
+                    Route("/cache/clear", cache_clear, methods=["GET", "POST"]),
+                    Route("/cache/refresh", cache_refresh_entry, methods=["GET", "POST"]),
+                    Route("/cache/search", cache_search_keys, methods=["GET"]),
                 ],
                 lifespan=lifespan,
             )
@@ -614,10 +679,11 @@ class DorisServer:
                     self.logger.info(f"Received request for path: {path}")
                     
                     try:
-                        # Handle health check, auth, and token management endpoints  
+                        # Handle health check, auth, token management, and cache management endpoints  
                         if (path.startswith("/health") or 
                             path.startswith("/auth/") or 
-                            path.startswith("/token/")):
+                            path.startswith("/token/") or
+                            path.startswith("/cache/")):
                             await starlette_app(scope, receive, send)
                             return
                         
