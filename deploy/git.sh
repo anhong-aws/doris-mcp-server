@@ -1,3 +1,3 @@
 git add .
-git commit -m "bi 缓存功能 20250104"
+git commit -m "bi restart脚本 20250105"
 git push origin master
