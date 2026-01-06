@@ -346,6 +346,22 @@ connection_manager.initialize_for_http_mode() → StreamableHTTPSessionManager()
 create ASGI app → uvicorn.run()
 ```
 
+`initialize_for_http_mode()` 方法会根据环境变量配置决定连接池的初始化策略：
+
+- **有全局配置时**：尝试验证全局数据库配置，如果有效则创建全局连接池供所有请求共享
+- **无全局配置时**：系统优雅降级，转而使用 token-bound 数据库配置模式
+
+在 token-bound 配置模式下，MCP 连接建立时会根据请求中的 token 从 `tokens.json` 中获取对应的数据库连接配置，并动态创建连接池。
+
+**架构限制说明**：
+由于当前架构中全局连接池只有一个实例，当配置了全局数据库连接时，该连接池会被所有客户端请求共享。如果需要连接不同的 Doris 数据库实例（即不同 token 对应不同数据库），目前存在以下限制：
+
+1. **多数据库场景**：不支持同时连接多个不同的 Doris 数据库实例，全局连接池会被后续配置覆盖
+2. **多 token 并发**：在全局配置模式下，不同 token 客户端无法使用不同的数据库连接
+3. **解决方案**：
+   - 方案一：不配置全局环境变量，改用纯 token-bound 模式（推荐）
+   - 方案二：所有客户端连接同一个 Doris 数据库实例，通过不同的 token 实现权限隔离
+
 ### 8.4 请求处理流程
 ```
 HTTP 请求 → mcp_app() → _extract_auth_info_from_scope() → 
@@ -408,3 +424,198 @@ python -m doris_mcp_server --transport http --host 0.0.0.0 --port 3000 --workers
 3. **资源管理**：服务器会自动处理资源清理
 4. **多进程模式**：HTTP 模式支持多进程部署，提高并发能力
 5. **错误处理**：包含详细的错误日志和异常处理机制
+
+## 14. 服务器关闭流程详解
+
+### 14.1 关闭触发方式
+
+服务器支持多种关闭触发方式：
+
+| 触发方式 | 信号/操作 | 行为 |
+|---------|----------|------|
+| Ctrl+C | SIGINT | 触发优雅关闭 |
+| `kill <pid>` | SIGTERM | 触发优雅关闭 |
+| `kill -9 <pid>` | SIGKILL | 立即终止，不执行清理 |
+| uvicorn 超时 | 内部计时器 | 超时后强制关闭 |
+
+### 14.2 关闭流程详解
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         服务器关闭流程                                   │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                         │
+│  ┌───────────────┐                                                     │
+│  │ 收到关闭信号   │                                                     │
+│  └───────┬───────┘                                                     │
+│          │                                                             │
+│          ▼                                                             │
+│  ┌───────────────────────────────────────────┐                         │
+│  │ uvicorn 收到关闭信号                       │                         │
+│  │ - 停止接受新连接                           │                         │
+│  │ - 设置超时计时器 (timeout_graceful_shutdown)│                         │
+│  └───────┬───────────────────────────────────┘                         │
+│          │                                                             │
+│          ▼                                                             │
+│  ┌───────────────────────────────────────────┐                         │
+│  │ Starlette lifespan 上下文管理器             │                         │
+│  │ - 执行 finally 块                          │                         │
+│  │ - 调用 server.shutdown()                   │                         │
+│  └───────┬───────────────────────────────────┘                         │
+│          │                                                             │
+│          ▼                                                             │
+│  ┌───────────────────────────────────────────┐                         │
+│  │ 1. security_manager.shutdown()            │                         │
+│  │    - JWT 令牌清理                          │                         │
+│  │    - OAuth 状态清理                        │                         │
+│  │    - Token 缓存清理                        │                         │
+│  └───────┬───────────────────────────────────┘                         │
+│          │                                                             │
+│          ▼                                                             │
+│  ┌───────────────────────────────────────────┐                         │
+│  │ 2. connection_manager.close()             │                         │
+│  │    - 关闭所有连接池                        │                         │
+│  │    - 取消活跃的连接                        │                         │
+│  │    - 停止后台健康检查任务                   │                         │
+│  └───────┬───────────────────────────────────┘                         │
+│          │                                                             │
+│          ▼                                                             │
+│  ┌───────────────────────────────────────────┐                         │
+│  │ uvicorn 超时处理                           │                         │
+│  │ - 如果 5秒 内未完成优雅关闭                 │                         │
+│  │ - 取消所有 running tasks                   │                         │
+│  │ - 强制关闭剩余连接                          │                         │
+│  └───────┬───────────────────────────────────┘                         │
+│          │                                                             │
+│          ▼                                                             │
+│  ┌───────────────────────────────────────────┐                         │
+│  │ 进程退出                                   │                         │
+│  └───────────────────────────────────────────┘                         │
+│                                                                         │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### 14.3 核心关闭代码
+
+```python
+# Starlette lifespan 上下文管理器
+@contextlib.asynccontextmanager
+async def lifespan(app: Starlette) -> AsyncIterator[None]:
+    """管理应用生命周期"""
+    logger.info("Application started!")
+    try:
+        yield
+    finally:
+        logger.info("Application is shutting down...")
+        # 确保即使超时也会执行 shutdown
+        await self.shutdown()
+
+# 服务器关闭方法
+async def shutdown(self):
+    """关闭服务器并清理资源"""
+    self.logger.info("Shutting down Doris MCP Server")
+    try:
+        # 1. 关闭安全管理器（包括 JWT 清理）
+        await self.security_manager.shutdown()
+        self.logger.info("Security manager shutdown completed")
+        
+        # 2. 关闭连接管理器
+        await self.connection_manager.close()
+        self.logger.info("Connection manager shutdown completed")
+        
+        # 3. 关闭 uvicorn 服务器
+        if self._uvicorn_server and self._uvicorn_server.started:
+            self._uvicorn_server.stop()
+        
+        self.logger.info("Doris MCP Server has been shut down")
+    except Exception as e:
+        self.logger.error(f"Error occurred while shutting down server: {e}")
+```
+
+### 14.4 uvicorn 超时配置
+
+```python
+# 单进程模式下的 uvicorn 配置
+config = uvicorn.Config(
+    app=mcp_app,
+    host=host,
+    port=port,
+    log_level="info",
+    timeout_graceful_shutdown=5  # 5秒超时
+)
+server = uvicorn.Server(config)
+```
+
+| 配置项 | 值 | 说明 |
+|--------|-----|------|
+| `timeout_graceful_shutdown` | 5 秒 | 收到关闭信号后等待优雅关闭的最长时间 |
+
+### 14.5 超时后的行为
+
+当 uvicorn 超时时：
+
+```
+ERROR: Cancel 1 running task(s), timeout graceful shutdown exceeded
+INFO:  Waiting for application shutdown.
+INFO:  Application shutdown complete.
+INFO:  Finished server process
+```
+
+1. **取消 running tasks**：uvicorn 取消所有正在运行的异步任务
+2. **等待 application shutdown**：等待 lifespan 的 finally 块执行
+3. **完成清理**：即使某些任务被取消，shutdown() 方法仍会执行
+4. **进程退出**：所有清理完成后进程退出
+
+### 14.6 主函数中的关闭处理
+
+```python
+async def main():
+    server = DorisServer(config)
+    
+    try:
+        if config.transport == "http":
+            await server.start_http(...)
+        else:
+            await server.start_stdio()
+    except KeyboardInterrupt:
+        logger.info("Received interrupt signal, shutting down server...")
+    except Exception as e:
+        logger.error(f"Server runtime error: {e}")
+        return 1
+    finally:
+        # 正常关闭或异常时的清理
+        await server.shutdown()
+        shutdown_logging()
+    return 0
+```
+
+### 14.7 不同信号的行为对比
+
+| 信号 | 可捕获 | 执行 shutdown | 执行顺序 |
+|------|--------|---------------|----------|
+| SIGINT (Ctrl+C) | ✅ | ✅ | 优雅关闭 → 超时 → 强制 |
+| SIGTERM (kill) | ✅ | ✅ | 优雅关闭 → 超时 → 强制 |
+| SIGKILL (kill -9) | ❌ | ❌ | 立即终止 |
+
+### 14.8 后台运行时的关闭方式
+
+当服务以 `nohup python ... &` 方式启动时：
+
+```bash
+# 方式1: 使用 pkill（推荐）
+pkill -f "doris_mcp_server"
+
+# 方式2: 通过端口找到进程
+lsof -ti:3000 | xargs kill  # 关闭端口 3000 的进程
+
+# 方式3: 强制关闭
+kill -9 $(lsof -ti:3000)
+```
+
+### 14.9 关闭时的注意事项
+
+1. **lifespan 的 finally 块**：确保即使 uvicorn 超时也会执行清理
+2. **异常处理**：shutdown 方法应捕获异常，避免影响其他清理操作
+3. **超时配置**：合理设置 `timeout_graceful_shutdown`，避免过长等待
+4. **信号处理**：`kill -9` 会直接终止进程，无法执行任何清理
+5. **日志系统**：关闭后需要调用 `shutdown_logging()` 刷新日志

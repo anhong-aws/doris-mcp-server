@@ -638,6 +638,8 @@ class DorisServer:
                     yield
                 finally:
                     self.logger.info("Application is shutting down...")
+                    # Ensure server shutdown is called even on timeout
+                    await self.shutdown()
             
             # Create ASGI application - use direct session manager as ASGI app
             starlette_app = Starlette(
@@ -782,7 +784,8 @@ class DorisServer:
                     host=host,
                     port=port,
                     workers=workers,
-                    log_level="info"
+                    log_level="info",
+                    timeout_graceful_shutdown=5  # 5秒超时，强制关闭连接
                 )
                 
             else:
@@ -792,7 +795,9 @@ class DorisServer:
                     app=mcp_app,
                     host=host,
                     port=port,
-                    log_level="info"
+                    log_level="info",
+                    timeout_graceful_shutdown=5  # 5秒超时，强制关闭连接
+
                 )
                 server = uvicorn.Server(config)
                 
