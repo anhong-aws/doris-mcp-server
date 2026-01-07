@@ -70,6 +70,13 @@ class MetadataExtractor:
         self.metadata_cache_time = {}
         self.cache_ttl = int(os.getenv("METADATA_CACHE_TTL", "3600"))  # Default cache 1 hour
         
+        # Cache switch
+        config = getattr(connection_manager, 'config', None)
+        if config and hasattr(config.performance, 'enable_metadata_cache'):
+            self.enable_metadata_cache = config.performance.enable_metadata_cache
+        else:
+            self.enable_metadata_cache = os.getenv("ENABLE_METADATA_CACHE", "true").lower() == "true"
+        
         # Refresh time
         self.last_refresh_time = None
         
@@ -370,7 +377,7 @@ class MetadataExtractor:
             cache_key = f"table_schema:{effective_db}:{table_name}"
             
             # Check cache first
-            if cache_key in self.metadata_cache:
+            if self.enable_metadata_cache and cache_key in self.metadata_cache:
                 cache_time = self.metadata_cache_time.get(cache_key, 0)
                 if time.time() - cache_time < self.cache_ttl:
                     logger.debug(f"Cache hit for table schema: {effective_db}.{table_name}")
@@ -424,9 +431,10 @@ class MetadataExtractor:
                     })
             
             # Store result in cache
-            self.metadata_cache[cache_key] = schema
-            self.metadata_cache_time[cache_key] = time.time()
-            logger.debug(f"Cached table schema for: {effective_db}.{table_name}")
+            if self.enable_metadata_cache:
+                self.metadata_cache[cache_key] = schema
+                self.metadata_cache_time[cache_key] = time.time()
+                logger.debug(f"Cached table schema for: {effective_db}.{table_name}")
             
             return schema
             
@@ -453,7 +461,7 @@ class MetadataExtractor:
             cache_key = f"database_tables:{effective_db}"
             
             # Check cache first
-            if cache_key in self.metadata_cache:
+            if self.enable_metadata_cache and cache_key in self.metadata_cache:
                 cache_time = self.metadata_cache_time.get(cache_key, 0)
                 if time.time() - cache_time < self.cache_ttl:
                     logger.debug(f"Cache hit for database tables: {effective_db}")
@@ -492,9 +500,10 @@ class MetadataExtractor:
                     })
             
             # Store result in cache
-            self.metadata_cache[cache_key] = tables
-            self.metadata_cache_time[cache_key] = time.time()
-            logger.debug(f"Cached database tables for: {effective_db}")
+            if self.enable_metadata_cache:
+                self.metadata_cache[cache_key] = tables
+                self.metadata_cache_time[cache_key] = time.time()
+                logger.debug(f"Cached database tables for: {effective_db}")
             
             return tables
             

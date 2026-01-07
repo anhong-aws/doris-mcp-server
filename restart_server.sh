@@ -11,9 +11,6 @@ fi
 
 echo "开始执行 Doris MCP Server 重新部署..."
 
-# 进入 Doris MCP Server 项目目录
-cd doris-mcp-server
-
 # 查找占用 3000 端口的进程ID
 echo "正在查找占用 3000 端口的进程..."
 lsof -t -i:3000

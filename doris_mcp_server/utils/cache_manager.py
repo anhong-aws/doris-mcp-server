@@ -6,7 +6,10 @@ Apache Doris MCP Cache Manager
 import json
 import time
 from datetime import datetime, timedelta
-from typing import Dict, List, Any, Optional, Union
+from typing import Dict, List, Any, Optional
+from starlette.requests import Request
+from starlette.responses import HTMLResponse
+from doris_mcp_server.templates.cache_templates import CACHE_MANAGEMENT_HTML
 from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -130,6 +133,70 @@ class DorisCacheManager:
                 "success": False,
                 "error": str(e),
                 "timestamp": datetime.now().isoformat()
+            }
+    
+    def get_cache_entry(self, key: str, include_value: bool = True) -> Dict[str, Any]:
+        """
+        获取单个缓存条目的详情
+        
+        Args:
+            key: 缓存键
+            include_value: 是否包含缓存值，默认True
+            
+        Returns:
+            缓存条目详情
+        """
+        try:
+            if not hasattr(self.metadata_extractor, 'metadata_cache'):
+                return {
+                    "success": False,
+                    "error": "No cache system found in metadata extractor"
+                }
+            
+            cache = self.metadata_extractor.metadata_cache
+            cache_time = self.metadata_extractor.metadata_cache_time
+            cache_ttl = getattr(self.metadata_extractor, 'cache_ttl', 3600)
+            
+            if key not in cache:
+                return {
+                    "success": False,
+                    "error": f"Cache key not found: {key}"
+                }
+            
+            value = cache[key]
+            cache_time_val = cache_time.get(key, 0)
+            now = time.time()
+            age_seconds = now - cache_time_val
+            is_expired = age_seconds >= cache_ttl
+            
+            entry = {
+                "success": True,
+                "key": key,
+                "age_seconds": round(age_seconds, 2),
+                "age_human": str(timedelta(seconds=int(age_seconds))),
+                "created_at": datetime.fromtimestamp(cache_time_val).isoformat() if cache_time_val > 0 else None,
+                "is_expired": is_expired,
+                "cache_type": key.split(':')[0] if ':' in key else 'other',
+                "value_size": len(str(value)) if value is not None else 0,
+                "value_type": type(value).__name__
+            }
+            
+            if include_value:
+                try:
+                    if isinstance(value, (list, dict)):
+                        entry["value"] = json.dumps(value, ensure_ascii=False, indent=2)
+                    else:
+                        entry["value"] = str(value)
+                except Exception:
+                    entry["value"] = f"<{type(value).__name__} object>"
+            
+            return entry
+            
+        except Exception as e:
+            logger.error(f"Failed to get cache entry {key}: {e}")
+            return {
+                "success": False,
+                "error": str(e)
             }
     
     def clear_cache(self, cache_type: Optional[str] = None, specific_keys: Optional[List[str]] = None) -> Dict[str, Any]:
@@ -298,7 +365,7 @@ class DorisCacheManager:
         刷新特定缓存条目（删除使其在下一次请求时重新生成）
         
         Args:
-            key: 缓存键
+            key: 缓存键，'all' 表示刷新所有缓存
             
         Returns:
             操作结果
@@ -312,6 +379,18 @@ class DorisCacheManager:
             
             cache = self.metadata_extractor.metadata_cache
             cache_time = self.metadata_extractor.metadata_cache_time
+            
+            if key == "all":
+                refreshed_keys = list(cache.keys())
+                cache.clear()
+                cache_time.clear()
+                logger.info(f"Refreshed all cache entries: {len(refreshed_keys)} keys")
+                return {
+                    "success": True,
+                    "message": f"Refreshed all cache entries: {len(refreshed_keys)} keys",
+                    "refreshed_count": len(refreshed_keys),
+                    "timestamp": datetime.now().isoformat()
+                }
             
             if key in cache:
                 del cache[key]
@@ -421,3 +500,122 @@ class DorisCacheManager:
             recommendations.append("Cache performance looks good.")
         
         return recommendations
+    
+    async def handle_management_page(self, _request: Request = None) -> HTMLResponse:
+        """Handle cache management demo page"""
+        try:
+            cache_details = self.get_cache_details(include_values=False)
+            cache_stats = self.get_cache_statistics()
+            
+            if not cache_details.get("success"):
+                error_html = """
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <title>Cache Management - Not Available</title>
+                    <style>
+                        body { font-family: Arial, sans-serif; margin: 50px; }
+                        .error { color: red; font-size: 18px; }
+                    </style>
+                </head>
+                <body>
+                    <h1>Cache Management</h1>
+                    <div class="error">Cache system is not available on this server.</div>
+                </body>
+                </html>
+                """
+                return HTMLResponse(error_html)
+            
+            stats = cache_details.get("statistics", {})
+            summary = cache_details.get("cache_summary", {})
+            entries = cache_details.get("cache_entries", [])
+            
+            enable_cache = getattr(self.metadata_extractor, 'enable_metadata_cache', True)
+            cache_ttl = getattr(self.metadata_extractor, 'cache_ttl', 3600)
+            recommendations = cache_stats.get('statistics', {}).get('recommendations', [])
+            
+            html_content = CACHE_MANAGEMENT_HTML
+            html_content = html_content.replace('{enable_cache_status}', 'Enabled' if enable_cache else 'Disabled')
+            html_content = html_content.replace('{enable_cache_class}', 'status-enabled' if enable_cache else 'status-disabled')
+            html_content = html_content.replace('{cache_ttl}', str(cache_ttl))
+            html_content = html_content.replace('{cache_ttl_minutes}', str(cache_ttl // 60))
+            html_content = html_content.replace('{generated_at}', summary.get('generated_at', 'N/A'))
+            html_content = html_content.replace('{valid_entries}', str(stats.get('valid_entries', 0)))
+            html_content = html_content.replace('{expired_entries}', str(stats.get('expired_entries', 0)))
+            html_content = html_content.replace('{total_entries}', str(summary.get('total_entries', 0)))
+            html_content = html_content.replace('{cache_efficiency}', str(stats.get('cache_efficiency', 'N/A')))
+            html_content = html_content.replace('{oldest_entry_age}', str(stats.get('oldest_entry_age', 0)))
+            html_content = html_content.replace('{newest_entry_age}', str(stats.get('newest_entry_age', 0)))
+            
+            cache_types_html = ""
+            for cache_type, count in summary.get('cache_types', {}).items():
+                cache_types_html += f"""
+                <div class="stat-item">
+                    <div class="stat-value">{count}</div>
+                    <div class="stat-label">{cache_type}</div>
+                </div>
+                """
+            html_content = html_content.replace('{cache_types_html}', cache_types_html)
+            
+            recommendations_html = ""
+            for rec in recommendations:
+                rec_type = 'info'
+                if 'Good' in rec:
+                    rec_type = 'success'
+                elif 'High' in rec or 'Large' in rec:
+                    rec_type = 'warning'
+                recommendations_html += f'<div class="recommendation {rec_type}">{rec}</div>'
+            html_content = html_content.replace('{recommendations_html}', recommendations_html)
+            
+            entries_html = ""
+            for entry in entries[:100]:
+                cache_type = entry.get('cache_type', 'other')
+                type_class = f'type-{cache_type}'
+                status_class = 'expired' if entry.get('is_expired') else 'valid'
+                status_text = 'Expired' if entry.get('is_expired') else 'Valid'
+                key = entry.get('key', '')
+                escaped_key = key.replace('"', '&quot;').replace("'", "\\\\'")
+                key_display = key[:60] + '...' if len(key) > 60 else key
+                entries_html += f"""
+                <tr data-type="{cache_type}" data-status="{status_class}">
+                    <td title="{escaped_key}">{key_display}</td>
+                    <td><span class="cache-type-badge {type_class}">{cache_type}</span></td>
+                    <td>{entry.get('age_human', 'N/A')}</td>
+                    <td class="{status_class}">{status_text}</td>
+                    <td>{entry.get('value_size', 0)} bytes</td>
+                    <td>
+                        <button class="btn-info btn-sm" onclick="viewEntry('{escaped_key}')" style="padding: 5px 10px; font-size: 12px;">Detail</button>
+                        <button class="btn-warning btn-sm" onclick="refreshEntry('{escaped_key}')" style="padding: 5px 10px; font-size: 12px;">Refresh</button>
+                        <button class="btn-danger btn-sm" onclick="deleteEntry('{escaped_key}')" style="padding: 5px 10px; font-size: 12px;">Delete</button>
+                    </td>
+                </tr>
+                """
+            html_content = html_content.replace('{entries_html}', entries_html)
+            
+            perf = cache_stats.get('statistics', {}).get('cache_performance', {})
+            memory = perf.get('memory_usage', {})
+            html_content = html_content.replace('{total_memory}', str(memory.get('total_size_human', 'N/A')))
+            html_content = html_content.replace('{avg_entry_size}', str(memory.get('average_entry_size', 0)))
+            html_content = html_content.replace('{hit_potential}', str(perf.get('hit_potential', 'N/A')))
+            
+            return HTMLResponse(html_content)
+            
+        except Exception as e:
+            logger.error(f"Error in handle_management_page: {e}")
+            error_html = f"""
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>Cache Management - Error</title>
+                <style>
+                    body {{ font-family: Arial, sans-serif; margin: 50px; }}
+                    .error {{ color: red; font-size: 18px; }}
+                </style>
+            </head>
+            <body>
+                <h1>Cache Management - Error</h1>
+                <div class="error">Internal server error: {str(e)}</div>
+            </body>
+            </html>
+            """
+            return HTMLResponse(error_html, status_code=500)

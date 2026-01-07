@@ -585,6 +585,10 @@ class DorisServer:
                 result = cache_manager.get_cache_statistics()
                 return JSONResponse(result)
             
+            async def cache_management(request):
+                """Cache management page"""
+                return await cache_manager.handle_management_page(request)
+            
             async def cache_clear(request):
                 """Clear cache entries"""
                 cache_type = request.query_params.get("cache_type", "expired")
@@ -629,6 +633,18 @@ class DorisServer:
                 result = cache_manager.search_cache_keys(pattern)
                 return JSONResponse(result)
             
+            async def cache_entry_detail(request):
+                """Get details of a specific cache entry"""
+                cache_key = request.query_params.get("key")
+                if not cache_key:
+                    return JSONResponse({
+                        "success": False,
+                        "error": "key parameter is required"
+                    }, status_code=400)
+                
+                result = cache_manager.get_cache_entry(cache_key)
+                return JSONResponse(result)
+            
             # Lifecycle manager - simplified since we manage session_manager externally
             @contextlib.asynccontextmanager
             async def lifespan(app: Starlette) -> AsyncIterator[None]:
@@ -661,6 +677,8 @@ class DorisServer:
                     # Cache management endpoints
                     Route("/cache/details", cache_details, methods=["GET"]),
                     Route("/cache/statistics", cache_statistics, methods=["GET"]),
+                    Route("/cache/entry", cache_entry_detail, methods=["GET"]),
+                    Route("/cache/management", cache_management, methods=["GET"]),
                     Route("/cache/clear", cache_clear, methods=["GET", "POST"]),
                     Route("/cache/refresh", cache_refresh_entry, methods=["GET", "POST"]),
                     Route("/cache/search", cache_search_keys, methods=["GET"]),

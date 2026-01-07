@@ -200,6 +200,7 @@ class PerformanceConfig:
 
     # Query cache configuration
     enable_query_cache: bool = True
+    enable_metadata_cache: bool = True
     cache_ttl: int = 300
     max_cache_size: int = 1000
 
@@ -494,6 +495,9 @@ class DorisConfig:
         # Performance configuration
         config.performance.enable_query_cache = (
             os.getenv("ENABLE_QUERY_CACHE", "true").lower() == "true"
+        )
+        config.performance.enable_metadata_cache = (
+            os.getenv("ENABLE_METADATA_CACHE", "true").lower() == "true"
         )
         config.performance.cache_ttl = int(
             os.getenv("CACHE_TTL", str(config.performance.cache_ttl))
