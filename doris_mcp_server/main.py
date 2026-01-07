@@ -571,79 +571,38 @@ class DorisServer:
                 return await token_handlers.handle_management_page(request)
             
             # Cache management endpoints
-            from .utils.cache_manager import DorisCacheManager
+            from .auth.cache_manager import DorisCacheManager
+            from .auth.cache_handlers import CacheHandlers
             cache_manager = DorisCacheManager(self.tools_manager.metadata_extractor)
+            cache_handlers = CacheHandlers(cache_manager, self.config)
             
             async def cache_details(request):
                 """Get detailed cache information"""
-                include_values = request.query_params.get("include_values", "false").lower() == "true"
-                result = cache_manager.get_cache_details(include_values=include_values)
-                return JSONResponse(result)
+                return await cache_handlers.handle_get_cache_details(request)
             
             async def cache_statistics(request):
                 """Get cache statistics"""
-                result = cache_manager.get_cache_statistics()
-                return JSONResponse(result)
+                return await cache_handlers.handle_get_cache_statistics(request)
             
             async def cache_management(request):
                 """Cache management page"""
-                return await cache_manager.handle_management_page(request)
+                return await cache_handlers.handle_management_page(request)
             
             async def cache_clear(request):
                 """Clear cache entries"""
-                cache_type = request.query_params.get("cache_type", "expired")
-                specific_keys = request.query_params.getlist("specific_keys")
-                
-                # Handle POST request with JSON body
-                if request.method == "POST":
-                    try:
-                        body = await request.json()
-                        cache_type = body.get("cache_type", cache_type)
-                        specific_keys = body.get("specific_keys", specific_keys)
-                    except Exception:
-                        pass  # Use query params if JSON parsing fails
-                
-                result = cache_manager.clear_cache(
-                    cache_type=cache_type if cache_type != "None" else None,
-                    specific_keys=specific_keys if specific_keys else None
-                )
-                return JSONResponse(result)
+                return await cache_handlers.handle_clear_cache(request)
             
             async def cache_refresh_entry(request):
                 """Refresh a specific cache entry"""
-                cache_key = request.query_params.get("cache_key")
-                if not cache_key:
-                    return JSONResponse({
-                        "success": False,
-                        "error": "cache_key parameter is required"
-                    }, status_code=400)
-                
-                result = cache_manager.refresh_cache_entry(cache_key)
-                return JSONResponse(result)
+                return await cache_handlers.handle_refresh_cache(request)
             
             async def cache_search_keys(request):
                 """Search for cache keys"""
-                pattern = request.query_params.get("pattern")
-                if not pattern:
-                    return JSONResponse({
-                        "success": False,
-                        "error": "pattern parameter is required"
-                    }, status_code=400)
-                
-                result = cache_manager.search_cache_keys(pattern)
-                return JSONResponse(result)
+                return await cache_handlers.handle_search_cache(request)
             
             async def cache_entry_detail(request):
                 """Get details of a specific cache entry"""
-                cache_key = request.query_params.get("key")
-                if not cache_key:
-                    return JSONResponse({
-                        "success": False,
-                        "error": "key parameter is required"
-                    }, status_code=400)
-                
-                result = cache_manager.get_cache_entry(cache_key)
-                return JSONResponse(result)
+                return await cache_handlers.handle_get_cache_entry(request)
             
             # Lifecycle manager - simplified since we manage session_manager externally
             @contextlib.asynccontextmanager
@@ -680,7 +639,6 @@ class DorisServer:
                     Route("/cache/entry", cache_entry_detail, methods=["GET"]),
                     Route("/cache/management", cache_management, methods=["GET"]),
                     Route("/cache/clear", cache_clear, methods=["GET", "POST"]),
-                    Route("/cache/refresh", cache_refresh_entry, methods=["GET", "POST"]),
                     Route("/cache/search", cache_search_keys, methods=["GET"]),
                 ],
                 lifespan=lifespan,

@@ -414,7 +414,6 @@ CACHE_MANAGEMENT_HTML = """
             </div>
             <div class="btn-group">
                 <button class="btn btn-primary" onclick="clearAllCache()">Clear All Cache</button>
-                <button class="btn btn-warning" onclick="refreshAllCache()">Refresh All Cache</button>
                 <button class="btn btn-info" onclick="window.location.reload()">Refresh Page</button>
             </div>
         </div>
@@ -683,50 +682,6 @@ CACHE_MANAGEMENT_HTML = """
                     setTimeout(() => window.location.reload(), 1000);
                 } else {
                     showNotification('Failed to clear cache: ' + result.message, 'error');
-                }
-            } catch (error) {
-                showNotification('Error: ' + error.message, 'error');
-            }
-        }
-        
-        async function refreshAllCache() {
-            if (!confirm('Are you sure you want to refresh all cache entries?')) {
-                return;
-            }
-            
-            try {
-                const response = await fetch('/cache/refresh?cache_key=all', {
-                    method: 'POST'
-                });
-                const result = await response.json();
-                
-                if (result.success) {
-                    showNotification('Cache refreshed successfully!', 'success');
-                    setTimeout(() => window.location.reload(), 1000);
-                } else {
-                    showNotification('Failed to refresh cache: ' + result.message, 'error');
-                }
-            } catch (error) {
-                showNotification('Error: ' + error.message, 'error');
-            }
-        }
-        
-        async function refreshEntry(key) {
-            if (!confirm('Are you sure you want to refresh this cache entry?')) {
-                return;
-            }
-            
-            try {
-                const response = await fetch('/cache/refresh?cache_key=' + encodeURIComponent(key), {
-                    method: 'POST'
-                });
-                const result = await response.json();
-                
-                if (result.success) {
-                    showNotification('Cache entry refreshed!', 'success');
-                    setTimeout(() => window.location.reload(), 1000);
-                } else {
-                    showNotification('Failed to refresh entry: ' + result.message, 'error');
                 }
             } catch (error) {
                 showNotification('Error: ' + error.message, 'error');

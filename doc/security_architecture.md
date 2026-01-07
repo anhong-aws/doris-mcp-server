@@ -168,22 +168,1062 @@ async def authenticate_request(self, auth_info: dict[str, Any]) -> AuthContext:
     raise ValueError(error_message)
 ```
 
-### 3.4 匿名访问机制
+### 3.5 令牌认证
 
-当所有认证方式都关闭时，系统返回**匿名上下文**，允许有限访问：
+### 3.5.1 令牌认证概述
+
+令牌认证是 Doris MCP Server 最基础、最常用的认证方式，适用于简单的 API 访问场景。用户通过预先配置的令牌（Token）访问 MCP Server，令牌与数据库连接配置绑定，实现了**令牌即身份+令牌即权限**的设计理念。
+
+### 3.5.2 令牌配置文件结构
+
+在 `tokens.json` 中定义了基于 Token 的认证配置，每个 Token 包含完整的安全元数据和数据库连接配置：
+
+```json
+{
+  "version": "1.0",
+  "tokens": [
+    {
+      "token_id": "admin-token",
+      "token": "doris_admin_token_123456",
+      "description": "Doris admin API access token",
+      "expires_hours": null,
+      "is_active": true,
+      "database_config": {
+        "host": "127.0.0.1",
+        "port": 9030,
+        "user": "root",
+        "password": "",
+        "database": "information_schema",
+        "charset": "UTF8",
+        "fe_http_port": 8030
+      }
+    },
+    {
+      "token_id": "analyst-token",
+      "token": "doris_analyst_token_654321",
+      "description": "Data analyst access token",
+      "expires_hours": 720,
+      "is_active": true,
+      "database_config": {
+        "host": "127.0.0.1",
+        "port": 9030,
+        "user": "analyst",
+        "password": "analyst_pass",
+        "database": "analytics_db",
+        "charset": "UTF8",
+        "fe_http_port": 8030
+      }
+    }
+  ]
+}
+```
+
+**令牌配置说明**：
+
+| 字段 | 说明 | 示例 |
+|------|------|------|
+| `token_id` | 令牌唯一标识符 | "admin-token" |
+| `token` | 令牌值（用于认证） | "doris_admin_token_123456" |
+| `description` | 令牌描述 | "Doris admin API access token" |
+| `expires_hours` | 有效期（小时），null 表示永不过期 | null, 720 |
+| `is_active` | 是否激活 | true, false |
+| `database_config` | 绑定的数据库连接配置 | {...} |
+
+### 3.5.3 令牌管理 API
+
+在 HTTP 模式下，TokenHandlers 提供了完整的令牌管理端点：
+
+| 端点 | 方法 | 功能 | 访问控制 |
+|------|------|------|---------|
+| `/token/create` | GET/POST | 创建新令牌 | 仅 localhost |
+| `/token/revoke/{token_id}` | DELETE | 撤销指定令牌 | 仅 localhost |
+| `/token/list` | GET | 列出所有令牌 | 仅 localhost |
+| `/token/stats` | GET | 获取令牌统计信息 | 仅 localhost |
+| `/token/cleanup` | POST | 清理过期令牌 | 仅 localhost |
+
+**创建令牌示例**：
+
+```bash
+# 通过查询参数创建令牌
+curl -X GET "http://localhost:8000/token/create?token_id=my-token&expires_hours=24&description=My+API+Token"
+
+# 通过 JSON Body 创建令牌（支持数据库配置）
+curl -X POST "http://localhost:8000/token/create" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "token_id": "my-token",
+    "expires_hours": 24,
+    "description": "My API Token",
+    "database_config": {
+      "host": "127.0.0.1",
+      "port": 9030,
+      "user": "myuser",
+      "password": "mypassword",
+      "database": "mydb"
+    }
+  }'
+```
+
+**响应示例**：
+
+```json
+{
+  "success": true,
+  "token_id": "my-token",
+  "token": "doris_my_token_abc123def456",
+  "expires_hours": 24,
+  "description": "My API Token",
+  "message": "Token created successfully"
+}
+```
+
+### 3.5.4 令牌认证流程
 
 ```python
-# 当认证禁用时返回的匿名上下文
-AuthContext(
-    token_id="anonymous",
-    user_id="anonymous",
-    roles=["anonymous"],
-    permissions=["read"],
-    security_level=SecurityLevel.PUBLIC,
-    client_ip=auth_info.get("client_ip", "unknown"),
-    session_id="anonymous_session"
+async def authenticate_token(self, auth_info: dict[str, Any]) -> AuthContext:
+    """令牌认证方法"""
+    
+    # 1. 提取令牌
+    token = auth_info.get("token", "")
+    if not token:
+        # 尝试从 Authorization header 提取
+        auth_header = auth_info.get("authorization", "")
+        if auth_header.startswith("Bearer "):
+            token = auth_header[7:]
+    
+    if not token:
+        raise ValueError("No token provided")
+    
+    # 2. 验证令牌
+    token_data = await self.token_manager.validate_token(token)
+    if not token_data:
+        raise ValueError("Invalid or expired token")
+    
+    # 3. 获取数据库配置（令牌绑定）
+    db_config = token_data.get("database_config")
+    
+    # 4. 创建认证上下文
+    auth_context = AuthContext(
+        token_id=token_data.get("token_id"),
+        user_id=token_data.get("token_id"),  # 使用 token_id 作为用户标识
+        roles=["token_user"],
+        permissions=["read", "execute_query"],
+        security_level=SecurityLevel.INTERNAL,
+        client_ip=auth_info.get("client_ip", "unknown"),
+        session_id=str(uuid.uuid4()),
+        token=token  # 保存原始令牌用于绑定数据库配置
+    )
+    
+    return auth_context
+```
+
+### 3.5.5 使用令牌访问 MCP Server
+
+```bash
+# 方式一：直接传递令牌
+curl -X POST "http://localhost:8000/mcp/call" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer doris_admin_token_123456" \
+  -d '{
+    "tool": "exec_query",
+    "arguments": {
+      "sql": "SELECT * FROM internal.information_schema.tables LIMIT 10"
+    }
+  }'
+
+# 方式二：在请求体中传递令牌
+curl -X POST "http://localhost:8000/mcp/call" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "token": "doris_admin_token_123456",
+    "tool": "exec_query",
+    "arguments": {
+      "sql": "SELECT * FROM internal.information_schema.tables LIMIT 10"
+    }
+  }'
+```
+
+## 3.6 JWT 认证
+
+### 3.6.1 JWT 认证概述
+
+JWT（JSON Web Token）认证是一种**无状态**的认证方式，适用于分布式系统和微服务架构。JWT 令牌包含用户身份信息和声明（Claims），服务端可以自行验证令牌有效性，无需维护会话状态。
+
+Doris MCP Server 的 JWT 认证支持：
+
+- **多种签名算法**：HS256、RS256、ES256
+- **双令牌机制**：Access Token + Refresh Token
+- **令牌黑名单**：支持令牌主动撤销
+- **密钥轮换**：自动化的密钥更新机制
+- **完整的声明验证**：issuer、audience、expiration 等
+
+### 3.6.2 JWT 配置
+
+在 `.env` 文件中配置 JWT 认证参数：
+
+```bash
+# 启用 JWT 认证
+ENABLE_JWT_AUTH=true
+
+# JWT 签名算法（HS256 对称加密，RS256/ES256 非对称加密）
+JWT_ALGORITHM=RS256
+
+# JWT 密钥配置
+# 对于 HS256：使用 JWT_SECRET_KEY
+# 对于 RS256/ES256：使用密钥文件路径
+JWT_SECRET_KEY=your_hs256_secret_key_here
+JWT_PRIVATE_KEY_PATH=./keys/jwt_private.pem
+JWT_PUBLIC_KEY_PATH=./keys/jwt_public.pem
+
+# JWT 令牌发行者
+JWT_ISSUER=doris-mcp-server
+
+# JWT 令牌受众
+JWT_AUDIENCE=doris-mcp-client
+
+# Access Token 有效期（秒）
+JWT_ACCESS_TOKEN_EXPIRY=3600
+
+# Refresh Token 有效期（秒）
+JWT_REFRESH_TOKEN_EXPIRY=604800
+
+# 令牌验证开关
+JWT_VERIFY_SIGNATURE=true
+JWT_VERIFY_EXPIRATION=true
+JWT_VERIFY_AUDIENCE=true
+JWT_VERIFY_ISSUER=true
+
+# 时钟偏差容忍（秒）
+JWT_LEEWAY=10
+```
+
+### 3.6.3 JWT 令牌结构
+
+JWT 令牌由三部分组成：`header.payload.signature`
+
+**Header（头部）**：
+
+```json
+{
+  "alg": "RS256",
+  "typ": "JWT"
+}
+```
+
+**Payload（载荷）**：
+
+```json
+{
+  "iss": "doris-mcp-server",
+  "aud": "doris-mcp-client",
+  "sub": "user123",
+  "iat": 1704067200,
+  "exp": 1704070800,
+  "jti": "550e8400-e29b-41d4-a716-446655440000",
+  "roles": ["admin", "analyst"],
+  "permissions": ["read", "write", "execute_query"],
+  "security_level": "internal"
+}
+```
+
+**Claims 说明**：
+
+| Claim | 说明 | 必填 |
+|-------|------|------|
+| `iss` (issuer) | 令牌发行者 | 是 |
+| `aud` (audience) | 令牌受众 | 是 |
+| `sub` (subject) | 用户标识 | 是 |
+| `iat` (issued at) | 发行时间 | 可选 |
+| `exp` (expiration time) | 过期时间 | 可选 |
+| `jti` (JWT ID) | 令牌唯一标识 | 可选 |
+| `roles` | 用户角色列表 | 可选 |
+| `permissions` | 用户权限列表 | 可选 |
+| `security_level` | 安全级别 | 可选 |
+
+### 3.6.4 JWT 令牌生成
+
+```python
+from doris_mcp_server.auth.jwt_manager import JWTManager
+
+async def generate_jwt_tokens():
+    """生成 JWT 令牌对"""
+    
+    jwt_manager = JWTManager(config)
+    
+    # 用户信息
+    user_info = {
+        "user_id": "user123",
+        "roles": ["admin", "analyst"],
+        "permissions": ["read", "write", "execute_query"],
+        "security_level": "internal"
+    }
+    
+    # 生成令牌
+    tokens = await jwt_manager.generate_tokens(user_info)
+    
+    return tokens
+```
+
+**返回结果**：
+
+```json
+{
+  "access_token": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "token_type": "Bearer",
+  "expires_in": 3600,
+  "refresh_token": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "refresh_expires_in": 604800,
+  "user_id": "user123",
+  "issued_at": 1704067200
+}
+```
+
+### 3.6.5 JWT 令牌验证
+
+```python
+async def validate_jwt_token(token: str) -> dict:
+    """验证 JWT 令牌"""
+    
+    jwt_manager = JWTManager(config)
+    
+    # 验证并解析令牌
+    result = await jwt_manager.validate_token(token, token_type='access')
+    
+    if result["valid"]:
+        return {
+            "valid": True,
+            "user_id": result["payload"].get("sub"),
+            "roles": result["payload"].get("roles", []),
+            "permissions": result["payload"].get("permissions", []),
+            "security_level": result["payload"].get("security_level"),
+            "payload": result["payload"]
+        }
+    else:
+        return {
+            "valid": False,
+            "error": result.get("error", "Token validation failed")
+        }
+```
+
+### 3.6.6 JWT 令牌刷新
+
+```python
+async def refresh_jwt_tokens(refresh_token: str):
+    """使用 Refresh Token 获取新的 Access Token"""
+    
+    jwt_manager = JWTManager(config)
+    
+    # 验证 Refresh Token
+    result = await jwt_manager.validate_token(refresh_token, token_type='refresh')
+    
+    if result["valid"]:
+        # 从 Refresh Token 中提取用户信息
+        payload = result["payload"]
+        user_info = {
+            "user_id": payload.get("sub"),
+            "roles": payload.get("roles", []),
+            "permissions": payload.get("permissions", []),
+            "security_level": payload.get("security_level")
+        }
+        
+        # 生成新的令牌对
+        new_tokens = await jwt_manager.generate_tokens(user_info)
+        return new_tokens
+    else:
+        raise ValueError("Invalid refresh token")
+```
+
+### 3.6.7 JWT 令牌撤销
+
+```python
+async def revoke_jwt_token(jti: str):
+    """撤销 JWT 令牌"""
+    
+    jwt_manager = JWTManager(config)
+    
+    # 将 JTI 加入黑名单
+    success = await jwt_manager.revoke_token_by_jti(jti)
+    
+    return success
+```
+
+### 3.6.8 JWT 密钥管理
+
+对于非对称加密算法（RS256、ES256），需要管理密钥对：
+
+```bash
+# 生成 RSA 密钥对
+openssl genrsa -out jwt_private.pem 2048
+openssl rsa -in jwt_private.pem -pubout -out jwt_public.pem
+
+# 生成 ECDSA 密钥对
+openssl ecparam -name prime256v1 -genkey -noout -out ecdsa_private.pem
+openssl ec -in ecdsa_private.pem -pubout -out ecdsa_public.pem
+```
+
+**密钥轮换配置**：
+
+```python
+# 自动轮换间隔（秒），0 表示禁用自动轮换
+KEY_ROTATION_INTERVAL = 30 * 24 * 3600  # 30天
+
+# 手动触发密钥轮换
+async def rotate_jwt_keys():
+    """手动轮换 JWT 密钥"""
+    jwt_manager = JWTManager(config)
+    await jwt_manager.key_manager.rotate_keys()
+```
+
+### 3.6.9 JWT 认证流程图
+
+```
+┌─────────┐                           ┌─────────────────┐
+│  Client │                           │ MCP Server      │
+└────┬────┘                           └────────┬────────┘
+     │                                         │
+     │  1. POST /auth/login (credentials)      │
+     │────────────────────────────────────────>│
+     │                                         │
+     │                          2. Validate   │
+     │                             credentials│
+     │                                         │
+     │  3. Generate tokens                     │
+     │    (access + refresh)                  │
+     │<────────────────────────────────────────│
+     │                                         │
+     │  4. Access API with access_token        │
+     │    (Authorization: Bearer <token>)      │
+     │────────────────────────────────────────>│
+     │                                         │
+     │                          5. Validate    │
+     │                             JWT token   │
+     │                                         │
+     │  6. Return requested data               │
+     │<────────────────────────────────────────│
+     │                                         │
+     │  7. Access token expired →              │
+     │     Use refresh_token to get new token  │
+     │────────────────────────────────────────>│
+     │                                         │
+     │  8. Generate new token pair             │
+     │<────────────────────────────────────────│
+```
+
+## 3.7 OAuth 认证
+
+### 3.7.1 OAuth 认证概述
+
+OAuth 2.0 是一种开放标准授权协议，允许用户在不提供用户名和密码的情况下，让第三方应用访问其存储在其他服务提供者上的资源。Doris MCP Server 实现了简化的 OAuth 2.0 授权码流程，支持与企业身份管理系统（如 Keycloak、Auth0、Okta 等）集成。
+
+### 3.7.2 OAuth 配置
+
+在 `.env` 文件中配置 OAuth 参数：
+
+```bash
+# 启用 OAuth 认证
+ENABLE_OAUTH_AUTH=true
+
+# OAuth 提供者类型
+OAUTH_PROVIDER=keycloak  # keycloak, auth0, okta, generic
+
+# OAuth 客户端配置
+OAUTH_CLIENT_ID=your-client-id
+OAUTH_CLIENT_SECRET=your-client-secret
+
+# OAuth 服务器配置
+OAUTH_AUTH_URL=https://your-auth-server/realms/your-realm/protocol/openid-connect/auth
+OAUTH_TOKEN_URL=https://your-auth-server/realms/your-realm/protocol/openid-connect/token
+OAUTH_USERINFO_URL=https://your-auth-server/realms/your-realm/protocol/openid-connect/userinfo
+OAUTH_REDIRECT_URI=http://localhost:8000/auth/callback
+
+# OAuth 作用域
+OAUTH_SCOPES=openid profile email
+
+# PKCE 认证（增强安全性）
+OAUTH_PKCE_ENABLED=true
+
+# 令牌映射配置
+OAUTH_TOKEN_MAP_ROLES=roles
+OAUTH_TOKEN_MAP_PERMISSIONS=permissions
+OAUTH_TOKEN_MAP_USER_ID=sub
+```
+
+### 3.7.3 OAuth 认证端点
+
+| 端点 | 方法 | 功能 |
+|------|------|------|
+| `/auth/login` | GET | 发起 OAuth 登录 |
+| `/auth/callback` | GET | OAuth 回调处理 |
+| `/auth/provider` | GET | 获取 OAuth 提供者信息 |
+| `/auth/demo` | GET | OAuth 演示页面 |
+
+### 3.7.4 OAuth 登录流程
+
+**步骤 1：发起登录**
+
+```bash
+curl -X GET "http://localhost:8000/auth/login"
+```
+
+**响应**：
+
+```json
+{
+  "authorization_url": "https://your-auth-server/.../auth?client_id=xxx&redirect_uri=...&scope=openid+profile&state=xyz",
+  "state": "xyz123",
+  "provider": "keycloak",
+  "message": "Navigate to authorization_url to complete OAuth login"
+}
+```
+
+**步骤 2：用户授权**
+
+用户访问返回的 `authorization_url`，在 OAuth 提供者页面完成身份验证和授权。
+
+**步骤 3：处理回调**
+
+OAuth 提供者将用户重定向到 `/auth/callback?code=xxx&state=xyz`：
+
+```bash
+curl -X GET "http://localhost:8000/auth/callback?code=authorization_code&state=xyz123"
+```
+
+**响应**：
+
+```json
+{
+  "success": true,
+  "user_id": "user123",
+  "roles": ["admin", "analyst"],
+  "permissions": ["read", "write"],
+  "security_level": "internal",
+  "session_id": "session-uuid",
+  "message": "OAuth authentication successful"
+}
+```
+
+### 3.7.5 OAuth 认证实现
+
+```python
+async def handle_oauth_callback(self, code: str, state: str) -> AuthContext:
+    """处理 OAuth 回调"""
+    
+    # 1. 验证 state 防止 CSRF 攻击
+    if not self._validate_state(state):
+        raise ValueError("Invalid state parameter")
+    
+    # 2. 使用授权码交换访问令牌
+    token_response = await self._exchange_code_for_token(code)
+    
+    # 3. 获取用户信息
+    user_info = await self._get_user_info(token_response["access_token"])
+    
+    # 4. 从用户信息中提取角色和权限
+    roles = self._extract_roles(user_info)
+    permissions = self._extract_permissions(user_info)
+    security_level = self._determine_security_level(user_info)
+    
+    # 5. 创建认证上下文
+    auth_context = AuthContext(
+        token_id=user_info.get("sub"),
+        user_id=user_info.get("sub"),
+        roles=roles,
+        permissions=permissions,
+        security_level=security_level,
+        client_ip="oauth",
+        session_id=str(uuid.uuid4())
+    )
+    
+    return auth_context
+```
+
+### 3.7.6 OAuth 与 JWT 的集成
+
+OAuth 认证成功后，可以颁发 JWT 令牌供后续 API 调用使用：
+
+```python
+async def oauth_login_flow(auth_code: str, state: str) -> dict:
+    """完整的 OAuth 登录流程"""
+    
+    # 1. 处理 OAuth 回调，获取用户信息
+    auth_context = await security_manager.handle_oauth_callback(auth_code, state)
+    
+    # 2. 生成 JWT 令牌
+    user_info = {
+        "user_id": auth_context.user_id,
+        "roles": auth_context.roles,
+        "permissions": auth_context.permissions,
+        "security_level": auth_context.security_level.value
+    }
+    
+    tokens = await jwt_manager.generate_tokens(user_info)
+    
+    return {
+        "access_token": tokens["access_token"],
+        "token_type": "Bearer",
+        "expires_in": tokens["expires_in"],
+        "refresh_token": tokens.get("refresh_token"),
+        "user": {
+            "user_id": auth_context.user_id,
+            "roles": auth_context.roles
+        }
+    }
+```
+
+### 3.7.7 OAuth 演示页面
+
+访问 `/auth/demo` 可以查看 OAuth 认证的交互式演示页面：
+
+```bash
+# 打开浏览器访问
+http://localhost:8000/auth/demo
+```
+
+演示页面包含：
+- OAuth 配置信息展示
+- OAuth 登录按钮
+- 认证结果展示
+- API 端点说明
+
+## 3.8 多认证方式对比
+
+| 特性 | 令牌认证 | JWT 认证 | OAuth 认证 |
+|------|---------|---------|-----------|
+| **状态** | 有状态 | 无状态 | 无状态 |
+| **复杂度** | 低 | 中 | 高 |
+| **适用场景** | 简单 API | 分布式系统 | 企业集成 |
+| **用户管理** | 外部 | 外部 | 外部 |
+| **令牌刷新** | 需手动 | 自动 | 自动 |
+| **安全性** | 中 | 高 | 高 |
+| **单点登录** | 不支持 | 支持 | 支持 |
+| **令牌撤销** | 即时 | 需黑名单 | 需黑名单 |**选择建议**：
+
+- **令牌认证**：适用于简单的内部系统，令牌与数据库配置绑定
+- **JWT 认证**：适用于分布式系统和微服务架构，需要无状态认证
+- **OAuth 认证**：适用于企业环境，需要与现有身份管理系统集成
+
+## 3.9 当前架构的局限性
+
+### 3.9.1 多租户支持现状
+
+Doris MCP Server 当前架构在多租户支持方面存在以下限制，需要在后续版本中改进：
+
+| 限制项 | 当前状态 | 影响 |
+|--------|---------|------|
+| **连接池** | 单一全局连接池 | 无法为不同租户/用户维护独立的数据库连接 |
+| **角色隔离** | 基于 Token 静态配置 | 角色和权限在 Token 级别，无法实现动态租户隔离 |
+| **数据隔离** | 依赖数据库配置 | 虽然支持不同 Token 绑定不同数据库配置，但实际使用受限 |
+| **会话管理** | 无状态设计 | 无法追踪租户会话上下文 |
+
+### 3.9.2 多 Token 配置的局限性
+
+虽然在 `tokens.json` 中可以配置多个 Token，每个 Token 可以绑定不同的数据库配置：
+
+```json
+{
+  "tokens": [
+    {
+      "token_id": "tenant-a-admin",
+      "token": "token_for_tenant_a",
+      "database_config": {
+        "host": "doris-a.example.com",
+        "user": "tenant_a_user",
+        "database": "tenant_a_db"
+      }
+    },
+    {
+      "token_id": "tenant-b-analyst",
+      "token": "token_for_tenant_b",
+      "database_config": {
+        "host": "doris-b.example.com",
+        "user": "tenant_b_user",
+        "database": "tenant_b_db"
+      }
+    }
+  ]
+}
+```
+
+**但是存在以下问题**：
+
+1. **单一连接池限制**
+   ```
+   当前架构：┌─────────────────────────────────────┐
+             │        Doris MCP Server           │
+             │  ┌─────────────────────────────┐  │
+             │  │    全局单一连接池            │  │
+             │  │  - 单个数据库连接实例        │  │
+             │  │  - 共享连接池大小           │  │
+             │  │  - 无法按租户隔离连接        │  │
+             │  └─────────────────────────────┘  │
+             └─────────────────────────────────────┘
+   
+   问题：
+   - 所有请求共享同一个数据库连接池
+   - 无法为不同租户维护独立的连接状态
+   - 高并发时连接竞争激烈
+   ```
+
+2. **角色与权限的静态绑定**
+
+   在 `security.py` 的 `authenticate_token` 方法中，Token 认证的 `AuthContext` 是硬编码的：
+
+   ```python
+   # /doris_mcp_server/utils/security.py 第 635-647 行
+   return AuthContext(
+       token_id=token_info.token_id,
+       user_id=token_info.token_id,  # Use token_id as user_id for token auth
+       roles=["token_user"],           # ⚠️ 所有 Token 都固定为这个角色
+       permissions=["read", "write"],  # ⚠️ 所有 Token 都固定为这两个权限
+       security_level=SecurityLevel.INTERNAL,  # ⚠️ 所有 Token 都是这个安全级别
+       client_ip=auth_info.get("client_ip", "unknown"),
+       session_id=auth_info.get("session_id", f"session_{token_info.token_id}"),
+       login_time=datetime.utcnow(),
+       last_activity=token_info.last_used,
+       token=token  # Store raw token for token-bound database configuration
+   )
+   ```
+
+   **这意味着**：即使在 `tokens.json` 中为不同的 Token 配置了不同的数据库连接，所有 Token 用户仍然获得完全相同的：
+   - **角色**：`["token_user"]`
+   - **权限**：`["read", "write"]`
+   - **安全级别**：`INTERNAL`
+
+   **无法实现**：
+   - 为 Token A 配置 `["admin"]` 角色，为 Token B 配置 `["readonly"]` 角色
+   - 为不同 Token 设置不同的权限集合
+   - 基于 Token 的细粒度租户权限隔离
+   - 不同租户使用不同的安全级别（如 `CONFIDENTIAL` vs `INTERNAL`）
+
+   **对比 JWT 认证**：JWT 的 `generate_tokens` 方法支持从 `user_info` 中读取角色和权限：
+
+   ```python
+   # JWT 认证可以从 user_info 获取角色权限
+   base_payload = {
+       'sub': user_info.get('user_id'),
+       'roles': user_info.get('roles', []),        # ✅ 从参数读取
+       'permissions': user_info.get('permissions', []),  # ✅ 从参数读取
+       'security_level': user_info.get('security_level', 'internal')  # ✅ 从参数读取
+   }
+   ```
+
+   而 Token 认证无法做到这一点，这是两者在权限灵活性上的关键差异。
+
+3. **无法实现真正的多租户隔离**
+   ```
+   场景：多租户 SaaS 应用
+   
+   期望架构：
+   ┌─────────────┐    ┌─────────────┐    ┌─────────────┐
+   │  Tenant A   │    │  Tenant B   │    │  Tenant C   │
+   │  User: Alice│    │  User: Bob  │    │  User: Carol│
+   │  Role: Admin│    │  Role: User │    │  Role: Analyst│
+   └──────┬──────┘    └──────┬──────┘    └──────┬──────┘
+          │                  │                  │
+          └──────────────────┼──────────────────┘
+                             ▼
+                   ┌─────────────────┐
+                   │  MCP Server     │
+                   │  多租户隔离     │
+                   │  - 租户ID追踪   │
+                   │  - 角色动态分配 │
+                   │  - 权限细粒度   │
+                   └─────────────────┘
+   
+   当前架构限制：
+   ┌─────────────┐    ┌─────────────┐    ┌─────────────┐
+   │  Tenant A   │    │  Tenant B   │    │  Tenant C   │
+   │  token_aaa  │    │  token_bbb  │    │  token_ccc  │
+   └──────┬──────┘    └──────┬──────┘    └──────┬──────┘
+          │                  │                  │
+          └──────────────────┼──────────────────┘
+                             ▼
+                   ┌─────────────────┐
+                   │  MCP Server     │
+                   │  单连接池       │
+                   │  无法隔离       │
+                   └─────────────────┘
+   ```
+
+### 3.9.3 数据库配置绑定的实际限制
+
+虽然 Token 支持绑定不同的 `database_config`：
+
+```json
+{
+  "database_config": {
+    "host": "127.0.0.1",
+    "port": 9030,
+    "user": "root",
+    "password": "",
+    "database": "information_schema",
+    "charset": "UTF8",
+    "fe_http_port": 8030
+  }
+}
+```
+
+**但实际使用中存在以下问题**：
+
+1. **运行时无法切换数据库配置**
+   ```python
+   # 当前实现：认证时确定数据库配置，后续无法更改
+   async def authenticate_token(self, auth_info):
+       token_data = await self.token_manager.validate_token(token)
+       db_config = token_data.get("database_config")  # 认证时获取
+       # 问题：整个请求生命周期都使用这个配置，无法动态切换
+   ```
+
+2. **连接池复用问题**
+   ```python
+   # 当前架构的问题
+   async def execute_query(self, sql, auth_context):
+       # 使用全局连接池，无法按租户隔离
+       connection = await self.connection_pool.get_connection()
+       # 所有租户共享连接池，无法追踪资源使用
+   ```
+
+3. **跨租户查询风险**
+   ```sql
+   -- 如果用户构造跨库查询，可能泄露数据
+   SELECT * FROM internal.tenant_a_db.users
+   JOIN internal.tenant_b_db.users ON ...
+   
+   -- 当前无法有效阻止这类跨租户访问
+   ```
+
+### 3.9.4 数据级别权限控制缺失
+
+**核心问题**：当前三种认证方式（Token、JWT、OAuth）都只实现了**应用级别的权限控制**，完全没有**数据级别的权限控制**能力。
+
+#### 三种认证方式的数据权限现状
+
+| 认证方式 | 认证层面 | 应用级别权限 | 数据级别权限 |
+|---------|---------|-------------|-------------|
+| **Token** | ✅ 静态 Token | ❌ 硬编码固定 `["token_user"]` | ❌ 无 |
+| **JWT** | ✅ 动态 Token | ✅ 从 `user_info` 读取 | ❌ 无 |
+| **OAuth** | ✅ Provider 认证 | ✅ 从 Provider 回调获取 | ❌ 无 |
+
+#### 什么是数据级别权限控制？
+
+```
+数据级别权限控制示例：
+
+┌─────────────────────────────────────────────────────────────────┐
+│                      用户 A (属于部门 Sales)                     │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  应用级别权限：                                                   │
+│  - 角色: ["analyst"]                                             │
+│  - 权限: ["read", "execute_query"]                               │
+│                                                                 │
+│  数据级别权限：                                                   │
+│  - 可访问数据库: sales_db                                         │
+│  - 可访问表: orders, customers                                    │
+│  - 可访问列: id, amount, region (排除: salary, bonus)            │
+│  - 行级过滤: WHERE department = 'Sales'                          │
+│                                                                 │
+│  实际执行的 SQL：                                                 │
+│  SELECT id, amount, region FROM sales_db.orders                 │
+│  WHERE department = 'Sales'  -- 自动注入的行级过滤               │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+#### 当前架构缺少的关键能力
+
+```python
+# 当前架构：认证后直接执行用户查询，没有任何数据过滤
+async def execute_query(self, sql, auth_context):
+    # 问题：用户提交什么 SQL 就执行什么 SQL
+    # 无法实现：
+    # 1. 列级权限控制（隐藏敏感列）
+    # 2. 行级权限控制（只返回用户有权访问的数据）
+    # 3. 表级权限控制（限制只能访问授权的表）
+    # 4. 数据库级权限控制（限制只能访问授权的数据库）
+    
+    result = await self.connection_manager.execute_query(
+        query_request.session_id, 
+        sql,  # 用户原始 SQL 直接执行
+        query_request.parameters, 
+        auth_context
+    )
+    return result
+```
+
+#### 数据级别权限控制的典型场景
+
+| 场景 | 需求描述 | 当前架构支持 |
+|------|---------|-------------|
+| **列级安全** | 隐藏用户的工资、身份证号等敏感列 | ❌ 不支持 |
+| **行级安全** | 用户只能查看自己部门/区域的数据 | ❌ 不支持 |
+| **动态数据遮蔽** | 非授权用户看到的敏感数据显示为 `****` | ❌ 不支持 |
+| **多租户数据隔离** | 每个租户只能访问自己的数据库/Schema | ⚠️ 部分支持（靠配置隔离） |
+| **时间窗口控制** | 只能查询指定时间范围内的数据 | ❌ 不支持 |
+
+#### 对比：三种认证方式的数据权限能力
+
+**1. Token 认证**
+
+```python
+# security.py 认证实现
+return AuthContext(
+    token_id=token_info.token_id,
+    user_id=token_info.token_id,
+    roles=["token_user"],           # 固定角色
+    permissions=["read", "write"],  # 固定权限
+    # ❌ 缺少 data_policies 字段
+    # ❌ 缺少 column_restrictions 字段  
+    # ❌ 缺少 row_filters 字段
 )
 ```
+
+**2. JWT 认证**
+
+```python
+# jwt_manager.py 的 generate_tokens
+base_payload = {
+    'sub': user_info.get('user_id'),
+    'roles': user_info.get('roles', []),
+    'permissions': user_info.get('permissions', []),
+    'security_level': user_info.get('security_level', 'internal')
+    # ✅ 有 roles 和 permissions，但仅限于应用级别
+    # ❌ 没有数据级别的访问控制策略
+}
+```
+
+**3. OAuth 认证**
+
+```python
+# oauth_handlers.py 的 handle_callback
+auth_context = AuthContext(
+    user_id=user_info.get("user_id"),
+    roles=id_token_claims.get("roles", []),
+    permissions=id_token_claims.get("permissions", [])
+    # ✅ 同样只有应用级别的角色权限
+    # ❌ 没有数据级别的过滤策略
+)
+```
+
+#### 实现数据级别权限控制的建议方案
+
+**方案一：查询重写（Query Rewrite）**
+
+```python
+class DataLevelSecurityFilter:
+    """数据级别安全过滤器"""
+    
+    async def filter_query(self, sql: str, auth_context) -> str:
+        """根据用户权限重写查询"""
+        filters = []
+        
+        # 1. 添加行级过滤
+        row_policy = await self._get_row_policy(auth_context)
+        if row_policy:
+            filters.append(row_policy)
+        
+        # 2. 应用列级安全
+        column_policy = await self._get_column_policy(auth_context)
+        if column_policy:
+            sql = self._apply_column_masking(sql, column_policy)
+        
+        # 3. 验证表访问权限
+        tables = self._extract_tables(sql)
+        for table in tables:
+            if not await self._check_table_access(auth_context, table):
+                raise PermissionError(f"Access denied to table: {table}")
+        
+        # 组合所有过滤条件
+        if filters:
+            sql = self._add_where_clause(sql, " AND ".join(filters))
+        
+        return sql
+```
+
+**方案二：基于策略的访问控制（PBAC）**
+
+```python
+# 扩展 AuthContext
+@dataclass
+class DataPolicy:
+    """数据访问策略"""
+    resource_type: str  # database, table, column, row
+    resource_name: str  # 资源标识
+    policy: str         # allow | deny
+    conditions: Dict[str, Any]  # 策略条件
+    masking: Optional[str] = None  # 数据遮蔽规则
+
+@dataclass 
+class ExtendedAuthContext(AuthContext):
+    """扩展的认证上下文"""
+    data_policies: List[DataPolicy] = field(default_factory=list)
+    tenant_id: Optional[str] = None
+    department_id: Optional[str] = None
+    data_classification: str = "internal"
+```
+
+**方案三：数据库层面的行级安全（RLS）**
+
+利用 Doris 的行级安全功能：
+
+```sql
+-- 创建行级安全策略
+CREATE ROW POLICY sales_policy ON sales_db.orders
+FOR SELECT
+USING (department IN (
+    SELECT department FROM user_departments WHERE user_id = current_user()
+));
+```
+
+### 3.9.5 建议的改进方向
+
+| 改进项 | 优先级 | 方案描述 |
+|--------|--------|---------|
+| **多连接池支持** | 高 | 为每个租户/用户维护独立的数据库连接池 |
+| **动态租户上下文** | 高 | 在请求上下文中传递租户 ID，实现动态租户隔离 |
+| **细粒度权限** | 中 | 实现基于用户而非 Token 的权限管理 |
+| **行级数据过滤** | 中 | 根据租户 ID 自动添加数据过滤条件 |
+| **审计日志** | 中 | 记录每个租户的操作日志 |
+
+**改进后的架构示意**：
+
+```
+┌─────────────────────────────────────────────────────┐
+│              Doris MCP Server (改进后)              │
+│  ┌─────────────────────────────────────────────┐   │
+│  │  租户上下文管理器                             │   │
+│  │  - 解析请求中的租户标识                      │   │
+│  │  - 加载租户配置                              │   │
+│  │  - 管理租户会话                              │   │
+│  └─────────────────────────────────────────────┘   │
+│                          │                          │
+│          ┌───────────────┼───────────────┐          │
+│          ▼               ▼               ▼          │
+│  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐   │
+│  │  Tenant A   │ │  Tenant B   │ │  Tenant C   │   │
+│  │  连接池     │ │  连接池     │ │  连接池     │   │
+│  │  - 10连接   │ │  5连接      │ │  20连接     │   │
+│  └─────────────┘ └─────────────┘ └─────────────┘   │
+└─────────────────────────────────────────────────────┘
+```
+
+### 3.9.5 当前架构适用场景
+
+尽管存在多租户限制，当前架构仍然适用于以下场景：
+
+| 场景 | 说明 | 推荐配置 |
+|------|------|---------|
+| **单租户内部系统** | 公司内部数据分析平台 | 令牌认证 + 单数据库 |
+| **开发测试环境** | 开发、测试、预发布环境 | JWT 认证 + 测试数据库 |
+| **简单 API 服务** | 对外提供简单查询 API | 令牌认证 + 只读用户 |
+| **多实例部署** | 按租户部署独立 MCP Server 实例 | 每个实例独立配置 |
+
+**不适用场景**：
+
+- 需要严格多租户隔离的 SaaS 产品
+- 租户数量动态变化的环境
+- 需要细粒度租户级权限控制的场景
+- 跨租户资源隔离有严格要求的场景
 
 ## 4. 权限控制体系
 
