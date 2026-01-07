@@ -110,7 +110,8 @@ class DorisCacheManager:
                     "is_expired": is_expired,
                     "cache_type": key.split(':')[0] if ':' in key else 'other',
                     "value_size": len(str(value)) if value is not None else 0,
-                    "value_type": type(value).__name__
+                    "value_type": type(value).__name__,
+                    "hits": getattr(self.metadata_extractor, 'metadata_cache_hits', {}).get(key, 0)
                 }
                 
                 if include_values and entry["value_size"] < 10240:
@@ -145,6 +146,16 @@ class DorisCacheManager:
                 "error": str(e),
                 "timestamp": datetime.now().isoformat()
             }
+    
+    def _remove_cache_entry(self, cache_key: str) -> None:
+        """Remove a cache entry from all cache dictionaries."""
+        cache = self.metadata_extractor.metadata_cache
+        cache_time = self.metadata_extractor.metadata_cache_time
+        cache_hits = getattr(self.metadata_extractor, 'metadata_cache_hits', {})
+        
+        cache.pop(cache_key, None)
+        cache_time.pop(cache_key, None)
+        cache_hits.pop(cache_key, None)
     
     def get_cache_entry(self, key: str, include_value: bool = True) -> Dict[str, Any]:
         """
@@ -189,7 +200,8 @@ class DorisCacheManager:
                 "is_expired": is_expired,
                 "cache_type": key.split(':')[0] if ':' in key else 'other',
                 "value_size": len(str(value)) if value is not None else 0,
-                "value_type": type(value).__name__
+                "value_type": type(value).__name__,
+                "hits": getattr(self.metadata_extractor, 'metadata_cache_hits', {}).get(key, 0)
             }
             
             if include_value:
@@ -230,6 +242,7 @@ class DorisCacheManager:
             
             cache = self.metadata_extractor.metadata_cache
             cache_time = self.metadata_extractor.metadata_cache_time
+            cache_hits = getattr(self.metadata_extractor, 'metadata_cache_hits', {})
             
             cleared_entries = []
             
@@ -237,30 +250,25 @@ class DorisCacheManager:
                 for key in specific_keys:
                     if key in cache:
                         cleared_entries.append(key)
-                        del cache[key]
-                        if key in cache_time:
-                            del cache_time[key]
+                        self._remove_cache_entry(key)
                         
             elif cache_type == "all":
                 cleared_entries = list(cache.keys())
                 cache.clear()
                 cache_time.clear()
+                cache_hits.clear()
                 
             elif cache_type == "table_schema":
                 for key in list(cache.keys()):
                     if key.startswith("table_schema:"):
                         cleared_entries.append(key)
-                        del cache[key]
-                        if key in cache_time:
-                            del cache_time[key]
+                        self._remove_cache_entry(key)
                             
             elif cache_type == "database_tables":
                 for key in list(cache.keys()):
                     if key.startswith("database_tables:"):
                         cleared_entries.append(key)
-                        del cache[key]
-                        if key in cache_time:
-                            del cache_time[key]
+                        self._remove_cache_entry(key)
                             
             elif cache_type is None:
                 now = time.time()
@@ -269,9 +277,7 @@ class DorisCacheManager:
                 for key, cache_time_val in list(cache_time.items()):
                     if now - cache_time_val >= cache_ttl:
                         cleared_entries.append(key)
-                        if key in cache:
-                            del cache[key]
-                        del cache_time[key]
+                        self._remove_cache_entry(key)
             else:
                 return {
                     "success": False,

@@ -316,12 +316,14 @@ class CacheHandlers:
                 status_class = 'expired' if entry.get('is_expired') else 'valid'
                 status_text = 'Expired' if entry.get('is_expired') else 'Valid'
                 key = entry.get('key', '')
-                escaped_key = key.replace('"', '&quot;').replace("'", "\\\\'")
+                escaped_key = key.replace('"', '&quot;').replace("'", "\\'")
                 key_display = key[:60] + '...' if len(key) > 60 else key
+                
                 entries_html += f"""
                 <tr data-type="{cache_type}" data-status="{status_class}">
                     <td title="{escaped_key}">{key_display}</td>
                     <td><span class="cache-type-badge {type_class}">{cache_type}</span></td>
+                    <td>{entry.get('hits', 0)}</td>
                     <td>{entry.get('age_human', 'N/A')}</td>
                     <td class="{status_class}">{status_text}</td>
                     <td>{entry.get('value_size', 0)} bytes</td>

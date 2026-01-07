@@ -1,3 +1,3 @@
 git add .
-git commit -m "bi 增加缓存页面 20250105"
+git commit -m "bi 缓存优化 20250107"
 git push origin master

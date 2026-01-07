@@ -436,6 +436,7 @@ CACHE_MANAGEMENT_HTML = """
                         <tr>
                             <th>Cache Key</th>
                             <th>Type</th>
+                            <th>Hits</th>
                             <th>Age</th>
                             <th>Status</th>
                             <th>Size</th>
@@ -526,6 +527,10 @@ CACHE_MANAGEMENT_HTML = """
                     <div class="detail-row">
                         <span class="detail-label">Created:</span>
                         <span class="detail-value" id="detailCreated"></span>
+                    </div>
+                    <div class="detail-row" id="hintRow" style="display: none;">
+                        <span class="detail-label">Hint:</span>
+                        <span class="detail-value" id="detailHint"></span>
                     </div>
                 </div>
                 <div class="detail-section">
@@ -723,6 +728,22 @@ CACHE_MANAGEMENT_HTML = """
                     document.getElementById('detailSize').textContent = result.value_size + ' bytes';
                     document.getElementById('detailCreated').textContent = result.created_at || 'N/A';
                     document.getElementById('detailValue').textContent = result.value || '(No value)';
+                    
+                    if (result.hint) {
+                        let hintText = '';
+                        if (result.hint.source === 'table_schema') {
+                            hintText = 'Table: ' + result.hint.database + '.' + result.hint.table;
+                        } else if (result.hint.source === 'database_tables') {
+                            hintText = 'DB: ' + result.hint.database;
+                        } else {
+                            hintText = JSON.stringify(result.hint);
+                        }
+                        document.getElementById('detailHint').textContent = hintText;
+                        document.getElementById('hintRow').style.display = 'flex';
+                    } else {
+                        document.getElementById('hintRow').style.display = 'none';
+                    }
+                    
                     document.getElementById('detailModal').style.display = 'flex';
                 } else {
                     showNotification('Failed to load entry: ' + result.error, 'error');

@@ -68,6 +68,7 @@ class MetadataExtractor:
         # Caching system
         self.metadata_cache = {}
         self.metadata_cache_time = {}
+        self.metadata_cache_hits = {}
         self.cache_ttl = int(os.getenv("METADATA_CACHE_TTL", "3600"))  # Default cache 1 hour
         
         # Cache switch
@@ -83,209 +84,6 @@ class MetadataExtractor:
         # Session ID for database queries
         self._session_id = f"metadata_extractor_{uuid.uuid4().hex[:8]}"
     
-    def clear_cache(self, cache_type: str = "all") -> Dict[str, Any]:
-        """
-        Clear metadata cache
-        
-        Args:
-            cache_type: Type of cache to clear ('all', 'table_schema', 'database_tables')
-            
-        Returns:
-            Dictionary with operation result
-        """
-        try:
-            cleared_keys = []
-            
-            if cache_type == "all":
-                # Clear all cache
-                cleared_keys = list(self.metadata_cache.keys())
-                self.metadata_cache.clear()
-                self.metadata_cache_time.clear()
-            elif cache_type == "table_schema":
-                # Clear only table schema cache
-                for key in list(self.metadata_cache.keys()):
-                    if key.startswith("table_schema:"):
-                        cleared_keys.append(key)
-                        del self.metadata_cache[key]
-                        del self.metadata_cache_time[key]
-            elif cache_type == "database_tables":
-                # Clear only database tables cache
-                for key in list(self.metadata_cache.keys()):
-                    if key.startswith("database_tables:"):
-                        cleared_keys.append(key)
-                        del self.metadata_cache[key]
-                        del self.metadata_cache_time[key]
-            else:
-                return {
-                    "success": False,
-                    "error": f"Invalid cache type: {cache_type}. Use 'all', 'table_schema', or 'database_tables'"
-                }
-            
-            logger.info(f"Cleared {len(cleared_keys)} cache entries of type '{cache_type}'")
-            
-            return {
-                "success": True,
-                "message": f"Successfully cleared {len(cleared_keys)} cache entries",
-                "cleared_entries": cleared_keys,
-                "remaining_cache_size": len(self.metadata_cache)
-            }
-            
-        except Exception as e:
-            logger.error(f"Failed to clear cache: {e}")
-            return {
-                "success": False,
-                "error": str(e),
-                "message": "Failed to clear cache"
-            }
-    
-    def get_cache_stats(self) -> Dict[str, Any]:
-        """
-        Get cache statistics
-        
-        Returns:
-            Dictionary with cache statistics
-        """
-        try:
-            now = time.time()
-            total_entries = len(self.metadata_cache)
-            
-            # Count entries by type
-            table_schema_count = sum(1 for key in self.metadata_cache.keys() if key.startswith("table_schema:"))
-            database_tables_count = sum(1 for key in self.metadata_cache.keys() if key.startswith("database_tables:"))
-            
-            # Calculate age of cache entries
-            cache_ages = []
-            expired_entries = 0
-            
-            for key, cache_time in self.metadata_cache_time.items():
-                age = now - cache_time
-                cache_ages.append(age)
-                if age >= self.cache_ttl:
-                    expired_entries += 1
-            
-            avg_age = sum(cache_ages) / len(cache_ages) if cache_ages else 0
-            max_age = max(cache_ages) if cache_ages else 0
-            
-            return {
-                "success": True,
-                "cache_stats": {
-                    "total_entries": total_entries,
-                    "table_schema_entries": table_schema_count,
-                    "database_tables_entries": database_tables_count,
-                    "cache_ttl_seconds": self.cache_ttl,
-                    "average_age_seconds": round(avg_age, 2),
-                    "max_age_seconds": round(max_age, 2),
-                    "expired_entries": expired_entries,
-                    "valid_entries": total_entries - expired_entries,
-                    "cache_hit_potential": f"{((total_entries - expired_entries) / max(total_entries, 1)) * 100:.1f}%"
-                }
-            }
-            
-        except Exception as e:
-            logger.error(f"Failed to get cache stats: {e}")
-            return {
-                "success": False,
-                "error": str(e),
-                "message": "Failed to get cache statistics"
-            }
-    
-    def refresh_cache_for_table(self, table_name: str, db_name: str = None) -> Dict[str, Any]:
-        """
-        Refresh cache for a specific table
-        
-        Args:
-            table_name: Name of the table to refresh
-            db_name: Database name (optional)
-            
-        Returns:
-            Dictionary with operation result
-        """
-        try:
-            effective_db = db_name or self.db_name
-            
-            # Generate cache key for table schema
-            cache_key = f"table_schema:{effective_db}:{table_name}"
-            
-            if cache_key in self.metadata_cache:
-                del self.metadata_cache[cache_key]
-                del self.metadata_cache_time[cache_key]
-                logger.info(f"Removed cache entry for table: {effective_db}.{table_name}")
-                return {
-                    "success": True,
-                    "message": f"Cache refreshed for table: {effective_db}.{table_name}",
-                    "table_name": table_name,
-                    "db_name": effective_db
-                }
-            else:
-                logger.info(f"No cache entry found for table: {effective_db}.{table_name}")
-                return {
-                    "success": True,
-                    "message": f"No cache entry found for table: {effective_db}.{table_name}",
-                    "table_name": table_name,
-                    "db_name": effective_db
-                }
-                
-        except Exception as e:
-            logger.error(f"Failed to refresh cache for table {table_name}: {e}")
-            return {
-                "success": False,
-                "error": str(e),
-                "message": f"Failed to refresh cache for table: {table_name}"
-            }
-    
-    def refresh_cache_for_database(self, db_name: str = None) -> Dict[str, Any]:
-        """
-        Refresh cache for all tables in a specific database
-        
-        Args:
-            db_name: Database name (optional)
-            
-        Returns:
-            Dictionary with operation result
-        """
-        try:
-            effective_db = db_name or self.db_name
-            
-            # Remove database tables cache
-            db_cache_key = f"database_tables:{effective_db}"
-            removed_db_cache = False
-            if db_cache_key in self.metadata_cache:
-                del self.metadata_cache[db_cache_key]
-                del self.metadata_cache_time[db_cache_key]
-                removed_db_cache = True
-            
-            # Remove all table schema caches for this database
-            removed_table_caches = []
-            for key in list(self.metadata_cache.keys()):
-                if key.startswith(f"table_schema:{effective_db}:"):
-                    removed_table_caches.append(key)
-                    del self.metadata_cache[key]
-                    del self.metadata_cache_time[key]
-            
-            total_removed = len(removed_table_caches) + (1 if removed_db_cache else 0)
-            
-            logger.info(f"Removed {total_removed} cache entries for database: {effective_db}")
-            
-            return {
-                "success": True,
-                "message": f"Cache refreshed for database: {effective_db}",
-                "db_name": effective_db,
-                "removed_entries": {
-                    "database_tables": 1 if removed_db_cache else 0,
-                    "table_schemas": len(removed_table_caches),
-                    "total": total_removed
-                }
-            }
-                
-        except Exception as e:
-            logger.error(f"Failed to refresh cache for database {db_name}: {e}")
-            return {
-                "success": False,
-                "error": str(e),
-                "message": f"Failed to refresh cache for database: {db_name}"
-            }
-    
-
     # Removed sync _execute_query_with_catalog; use async variant instead
 
     async def _execute_query_with_catalog_async(self, query: str, db_name: str = None, catalog_name: str = None):
@@ -381,12 +179,13 @@ class MetadataExtractor:
                 cache_time = self.metadata_cache_time.get(cache_key, 0)
                 if time.time() - cache_time < self.cache_ttl:
                     logger.debug(f"Cache hit for table schema: {effective_db}.{table_name}")
+                    self.metadata_cache_hits[cache_key] = self.metadata_cache_hits.get(cache_key, 0) + 1
                     return self.metadata_cache[cache_key]
                 else:
                     logger.debug(f"Cache expired for table schema: {effective_db}.{table_name}")
-                    # Remove expired cache entry
-                    del self.metadata_cache[cache_key]
-                    del self.metadata_cache_time[cache_key]
+                    self.metadata_cache.pop(cache_key, None)
+                    self.metadata_cache_time.pop(cache_key, None)
+                    self.metadata_cache_hits.pop(cache_key, None)
             
             logger.debug(f"Cache miss for table schema: {effective_db}.{table_name}, querying database")
             
@@ -465,12 +264,13 @@ class MetadataExtractor:
                 cache_time = self.metadata_cache_time.get(cache_key, 0)
                 if time.time() - cache_time < self.cache_ttl:
                     logger.debug(f"Cache hit for database tables: {effective_db}")
+                    self.metadata_cache_hits[cache_key] = self.metadata_cache_hits.get(cache_key, 0) + 1
                     return self.metadata_cache[cache_key]
                 else:
                     logger.debug(f"Cache expired for database tables: {effective_db}")
-                    # Remove expired cache entry
-                    del self.metadata_cache[cache_key]
-                    del self.metadata_cache_time[cache_key]
+                    self.metadata_cache.pop(cache_key, None)
+                    self.metadata_cache_time.pop(cache_key, None)
+                    self.metadata_cache_hits.pop(cache_key, None)
             
             logger.debug(f"Cache miss for database tables: {effective_db}, querying database")
             
