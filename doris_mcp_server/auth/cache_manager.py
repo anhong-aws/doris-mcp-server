@@ -35,15 +35,87 @@ logger = get_logger(__name__)
 class DorisCacheManager:
     """Apache Doris缓存管理器"""
     
-    def __init__(self, metadata_extractor):
+    def __init__(self, config=None):
         """
         初始化缓存管理器
-        
+
         Args:
-            metadata_extractor: MetadataExtractor实例，用于访问其缓存系统
+            config: DorisConfig实例，包含缓存相关配置
         """
-        self.metadata_extractor = metadata_extractor
-        
+        self.config = config
+
+        self.cache_ttl = getattr(config.performance, 'cache_ttl', 3600)
+        self.max_cache_size = getattr(config.performance, 'max_cache_size', 1000)
+        self.enable_metadata_cache = getattr(config.performance, 'enable_metadata_cache', True)
+
+        self.metadata_cache = {}
+        self.metadata_cache_time = {}
+        self.metadata_cache_hits = {}
+
+    # =============================================================================
+    # Section 1: Core Cache Operations (used by bi_schema_extractor.py)
+    # =============================================================================
+
+    def get(self, key: str) -> tuple:
+        """
+        获取缓存
+
+        Args:
+            key: 缓存键
+
+        Returns:
+            (value, is_expired) - 如果缓存不存在返回 (None, False)
+        """
+        if not self.enable_metadata_cache:
+            return None, False
+
+        if key not in self.metadata_cache:
+            return None, False
+
+        cache_time = self.metadata_cache_time.get(key, 0)
+        is_expired = time.time() - cache_time >= self.cache_ttl
+
+        if is_expired:
+            self._remove_cache_entry(key)
+            return None, False
+
+        self.metadata_cache_hits[key] = self.metadata_cache_hits.get(key, 0) + 1
+        return self.metadata_cache[key], False
+
+    def set(self, key: str, value: Any) -> None:
+        """
+        设置缓存
+
+        Args:
+            key: 缓存键
+            value: 缓存值
+        """
+        if not self.enable_metadata_cache:
+            return
+
+        if self.max_cache_size > 0 and len(self.metadata_cache) >= self.max_cache_size:
+            self._evict_oldest()
+
+        self.metadata_cache[key] = value
+        self.metadata_cache_time[key] = time.time()
+
+    def delete(self, key: str) -> None:
+        """删除缓存"""
+        self._remove_cache_entry(key)
+
+    def _evict_oldest(self) -> None:
+        """驱逐最老的缓存条目"""
+        if not self.metadata_cache_time:
+            return
+
+        oldest_key = min(self.metadata_cache_time.keys(), key=lambda k: self.metadata_cache_time[k])
+        self._remove_cache_entry(oldest_key)
+        logger.debug(f"Evicted oldest cache entry: {oldest_key}")
+
+    # =============================================================================
+    # Section 2: Cache Management API (used by cache_handlers.py for UI/API)
+    # =============================================================================
+
     def get_cache_details(self, include_values: bool = False) -> Dict[str, Any]:
         """
         获取缓存详情
@@ -62,14 +134,14 @@ class DorisCacheManager:
                 "cache_entries": []
             }
             
-            if not hasattr(self.metadata_extractor, 'metadata_cache'):
+            if not hasattr(self, 'metadata_cache') or not self.metadata_cache:
                 cache_details["success"] = False
-                cache_details["error"] = "No cache system found in metadata extractor"
+                cache_details["error"] = "No cache system found"
                 return cache_details
             
-            cache = self.metadata_extractor.metadata_cache
-            cache_time = self.metadata_extractor.metadata_cache_time
-            cache_ttl = getattr(self.metadata_extractor, 'cache_ttl', 3600)
+            cache = self.metadata_cache
+            cache_time = self.metadata_cache_time
+            cache_ttl = self.cache_ttl
             
             now = time.time()
             
@@ -111,7 +183,7 @@ class DorisCacheManager:
                     "cache_type": key.split(':')[0] if ':' in key else 'other',
                     "value_size": len(str(value)) if value is not None else 0,
                     "value_type": type(value).__name__,
-                    "hits": getattr(self.metadata_extractor, 'metadata_cache_hits', {}).get(key, 0)
+                    "hits": self.metadata_cache_hits.get(key, 0)
                 }
                 
                 if include_values and entry["value_size"] < 10240:
@@ -146,12 +218,16 @@ class DorisCacheManager:
                 "error": str(e),
                 "timestamp": datetime.now().isoformat()
             }
-    
+
+    # =============================================================================
+    # Section 3: Private Helper Methods (internal use only)
+    # =============================================================================
+
     def _remove_cache_entry(self, cache_key: str) -> None:
         """Remove a cache entry from all cache dictionaries."""
-        cache = self.metadata_extractor.metadata_cache
-        cache_time = self.metadata_extractor.metadata_cache_time
-        cache_hits = getattr(self.metadata_extractor, 'metadata_cache_hits', {})
+        cache = self.metadata_cache
+        cache_time = self.metadata_cache_time
+        cache_hits = self.metadata_cache_hits
         
         cache.pop(cache_key, None)
         cache_time.pop(cache_key, None)
@@ -169,15 +245,15 @@ class DorisCacheManager:
             缓存条目详情
         """
         try:
-            if not hasattr(self.metadata_extractor, 'metadata_cache'):
+            if not hasattr(self, 'metadata_cache') or not self.metadata_cache:
                 return {
                     "success": False,
-                    "error": "No cache system found in metadata extractor"
+                    "error": "No cache system found"
                 }
             
-            cache = self.metadata_extractor.metadata_cache
-            cache_time = self.metadata_extractor.metadata_cache_time
-            cache_ttl = getattr(self.metadata_extractor, 'cache_ttl', 3600)
+            cache = self.metadata_cache
+            cache_time = self.metadata_cache_time
+            cache_ttl = self.cache_ttl
             
             if key not in cache:
                 return {
@@ -201,7 +277,7 @@ class DorisCacheManager:
                 "cache_type": key.split(':')[0] if ':' in key else 'other',
                 "value_size": len(str(value)) if value is not None else 0,
                 "value_type": type(value).__name__,
-                "hits": getattr(self.metadata_extractor, 'metadata_cache_hits', {}).get(key, 0)
+                "hits": self.metadata_cache_hits.get(key, 0)
             }
             
             if include_value:
@@ -234,15 +310,15 @@ class DorisCacheManager:
             操作结果字典
         """
         try:
-            if not hasattr(self.metadata_extractor, 'metadata_cache'):
+            if not hasattr(self, 'metadata_cache') or not self.metadata_cache:
                 return {
                     "success": False,
-                    "error": "No cache system found in metadata extractor"
+                    "error": "No cache system found"
                 }
             
-            cache = self.metadata_extractor.metadata_cache
-            cache_time = self.metadata_extractor.metadata_cache_time
-            cache_hits = getattr(self.metadata_extractor, 'metadata_cache_hits', {})
+            cache = self.metadata_cache
+            cache_time = self.metadata_cache_time
+            cache_hits = self.metadata_cache_hits
             
             cleared_entries = []
             
@@ -272,7 +348,7 @@ class DorisCacheManager:
                             
             elif cache_type is None:
                 now = time.time()
-                cache_ttl = getattr(self.metadata_extractor, 'cache_ttl', 3600)
+                cache_ttl = self.cache_ttl
                 
                 for key, cache_time_val in list(cache_time.items()):
                     if now - cache_time_val >= cache_ttl:
@@ -380,13 +456,13 @@ class DorisCacheManager:
             匹配的缓存键列表
         """
         try:
-            if not hasattr(self.metadata_extractor, 'metadata_cache'):
+            if not hasattr(self, 'metadata_cache') or not self.metadata_cache:
                 return {
                     "success": False,
-                    "error": "No cache system found in metadata extractor"
+                    "error": "No cache system found"
                 }
             
-            cache = self.metadata_extractor.metadata_cache
+            cache = self.metadata_cache
             matched_keys = []
             
             pattern_lower = pattern.lower()
@@ -409,7 +485,7 @@ class DorisCacheManager:
                 "error": str(e),
                 "timestamp": datetime.now().isoformat()
             }
-    
+
     def _format_bytes(self, bytes_size: int) -> str:
         """格式化字节大小"""
         for unit in ['B', 'KB', 'MB', 'GB']:

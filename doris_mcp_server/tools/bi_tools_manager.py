@@ -24,12 +24,12 @@ logger = get_logger(__name__)
 class DorisToolsManager:
     """Apache Doris Tools Manager"""
     
-    def __init__(self, connection_manager: DorisConnectionManager):
+    def __init__(self, connection_manager: DorisConnectionManager, cache_manager=None):
         self.connection_manager = connection_manager
         
         # Initialize business logic processors
         self.query_executor = DorisQueryExecutor(connection_manager)
-        self.metadata_extractor = MetadataExtractor(connection_manager=connection_manager)
+        self.metadata_extractor = MetadataExtractor(connection_manager=connection_manager, cache_manager=cache_manager)
         self.monitoring_tools = DorisMonitoringTools(connection_manager)
  
 

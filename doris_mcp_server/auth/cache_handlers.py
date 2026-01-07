@@ -272,8 +272,8 @@ class CacheHandlers:
             summary = cache_details.get("cache_summary", {})
             entries = cache_details.get("cache_entries", [])
             
-            enable_cache = getattr(self.cache_manager.metadata_extractor, 'enable_metadata_cache', True)
-            cache_ttl = getattr(self.cache_manager.metadata_extractor, 'cache_ttl', 3600)
+            enable_cache = getattr(self.cache_manager, 'enable_metadata_cache', True)
+            cache_ttl = getattr(self.cache_manager, 'cache_ttl', 3600)
             recommendations = cache_stats.get('statistics', {}).get('recommendations', [])
             
             html_content = CACHE_MANAGEMENT_HTML

@@ -50,7 +50,7 @@ from .db import DorisConnectionManager
 class MetadataExtractor:
     """Apache Doris Metadata Extractor"""
     
-    def __init__(self, db_name: str = None, catalog_name: str = None, connection_manager=None):
+    def __init__(self, db_name: str = None, catalog_name: str = None, connection_manager=None, cache_manager=None):
         """
         Initialize the metadata extractor
         
@@ -58,6 +58,7 @@ class MetadataExtractor:
             db_name: Default database name, uses the currently connected database if not specified
             catalog_name: Default catalog name for federation queries, uses the current catalog if not specified
             connection_manager: DorisConnectionManager instance for database operations
+            cache_manager: DorisCacheManager instance for caching (optional, for dependency injection)
         """
         # Get configuration from environment variables
         self.db_name = db_name or os.getenv("DORIS_DATABASE", "")
@@ -65,18 +66,7 @@ class MetadataExtractor:
         self.metadata_db = METADATA_DB_NAME  # Use constant
         self.connection_manager = connection_manager
         
-        # Caching system
-        self.metadata_cache = {}
-        self.metadata_cache_time = {}
-        self.metadata_cache_hits = {}
-        self.cache_ttl = int(os.getenv("METADATA_CACHE_TTL", "3600"))  # Default cache 1 hour
-        
-        # Cache switch
-        config = getattr(connection_manager, 'config', None)
-        if config and hasattr(config.performance, 'enable_metadata_cache'):
-            self.enable_metadata_cache = config.performance.enable_metadata_cache
-        else:
-            self.enable_metadata_cache = os.getenv("ENABLE_METADATA_CACHE", "true").lower() == "true"
+        self.cache_manager = cache_manager
         
         # Refresh time
         self.last_refresh_time = None
@@ -173,19 +163,13 @@ class MetadataExtractor:
             
             # Generate cache key for table schema
             cache_key = f"table_schema:{effective_db}:{table_name}"
-            
+
             # Check cache first
-            if self.enable_metadata_cache and cache_key in self.metadata_cache:
-                cache_time = self.metadata_cache_time.get(cache_key, 0)
-                if time.time() - cache_time < self.cache_ttl:
+            if self.cache_manager:
+                cached_value, _ = self.cache_manager.get(cache_key)
+                if cached_value is not None:
                     logger.debug(f"Cache hit for table schema: {effective_db}.{table_name}")
-                    self.metadata_cache_hits[cache_key] = self.metadata_cache_hits.get(cache_key, 0) + 1
-                    return self.metadata_cache[cache_key]
-                else:
-                    logger.debug(f"Cache expired for table schema: {effective_db}.{table_name}")
-                    self.metadata_cache.pop(cache_key, None)
-                    self.metadata_cache_time.pop(cache_key, None)
-                    self.metadata_cache_hits.pop(cache_key, None)
+                    return cached_value
             
             logger.debug(f"Cache miss for table schema: {effective_db}.{table_name}, querying database")
             
@@ -230,10 +214,8 @@ class MetadataExtractor:
                     })
             
             # Store result in cache
-            if self.enable_metadata_cache:
-                self.metadata_cache[cache_key] = schema
-                self.metadata_cache_time[cache_key] = time.time()
-                logger.debug(f"Cached table schema for: {effective_db}.{table_name}")
+            self.cache_manager.set(cache_key, schema)
+            logger.debug(f"Cached table schema for: {effective_db}.{table_name}")
             
             return schema
             
@@ -258,19 +240,15 @@ class MetadataExtractor:
             
             # Generate cache key for database tables
             cache_key = f"database_tables:{effective_db}"
-            
+
             # Check cache first
-            if self.enable_metadata_cache and cache_key in self.metadata_cache:
-                cache_time = self.metadata_cache_time.get(cache_key, 0)
-                if time.time() - cache_time < self.cache_ttl:
+            if self.cache_manager:
+                cached_value, _ = self.cache_manager.get(cache_key)
+                if cached_value is not None:
                     logger.debug(f"Cache hit for database tables: {effective_db}")
-                    self.metadata_cache_hits[cache_key] = self.metadata_cache_hits.get(cache_key, 0) + 1
-                    return self.metadata_cache[cache_key]
-                else:
-                    logger.debug(f"Cache expired for database tables: {effective_db}")
-                    self.metadata_cache.pop(cache_key, None)
-                    self.metadata_cache_time.pop(cache_key, None)
-                    self.metadata_cache_hits.pop(cache_key, None)
+                    return cached_value
+            else:
+                cached_value = None
             
             logger.debug(f"Cache miss for database tables: {effective_db}, querying database")
             
@@ -300,10 +278,8 @@ class MetadataExtractor:
                     })
             
             # Store result in cache
-            if self.enable_metadata_cache:
-                self.metadata_cache[cache_key] = tables
-                self.metadata_cache_time[cache_key] = time.time()
-                logger.debug(f"Cached database tables for: {effective_db}")
+            self.cache_manager.set(cache_key, tables)
+            logger.debug(f"Cached database tables for: {effective_db}")
             
             return tables
             

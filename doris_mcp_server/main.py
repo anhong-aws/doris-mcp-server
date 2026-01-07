@@ -212,6 +212,7 @@ from .tools.resources_manager import DorisResourcesManager
 from .utils.config import DorisConfig
 from .utils.db import DorisConnectionManager
 from .utils.security import DorisSecurityManager
+from .auth.cache_manager import DorisCacheManager
 import os
 
 # Configure logging - will be properly initialized later
@@ -237,12 +238,14 @@ class DorisServer:
         token_manager = self.security_manager.auth_provider.token_manager if hasattr(self.security_manager, 'auth_provider') and hasattr(self.security_manager.auth_provider, 'token_manager') else None
         self.connection_manager = DorisConnectionManager(config, self.security_manager, token_manager)
         
+        self.cache_manager = DorisCacheManager(config)
+
         # Set connection manager reference in security manager for database validation
         self.security_manager.connection_manager = self.connection_manager
 
         # Initialize independent managers
         self.resources_manager = DorisResourcesManager(self.connection_manager)
-        self.tools_manager = DorisToolsManager(self.connection_manager)
+        self.tools_manager = DorisToolsManager(self.connection_manager, self.cache_manager)
         self.prompts_manager = DorisPromptsManager(self.connection_manager)
 
         # Import here to avoid circular imports
@@ -571,10 +574,8 @@ class DorisServer:
                 return await token_handlers.handle_management_page(request)
             
             # Cache management endpoints
-            from .auth.cache_manager import DorisCacheManager
             from .auth.cache_handlers import CacheHandlers
-            cache_manager = DorisCacheManager(self.tools_manager.metadata_extractor)
-            cache_handlers = CacheHandlers(cache_manager, self.config)
+            cache_handlers = CacheHandlers(self.cache_manager, self.config)
             
             async def cache_details(request):
                 """Get detailed cache information"""
