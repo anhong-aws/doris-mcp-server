@@ -99,6 +99,7 @@ INDEX_PAGE_DISABLED_HTML = """
         <h2>Quick Links</h2>
         <p><a href="/token/management">Token Management</a></p>
         <p><a href="/cache/management">Cache Management</a></p>
+        <p><a href="/logs/management">MCP Log Management</a></p>
         <p><a href="/auth/demo">OAuth Demo</a></p>
     </div>
 </body>
@@ -214,6 +215,10 @@ INDEX_PAGE_ENABLED_HTML = """
             <span class="value"><a href="/cache/management">Manage Cache</a></span>
         </div>
         <div class="info-item">
+            <span class="label">MCP Log Management:</span>
+            <span class="value"><a href="/logs/management">View MCP Logs</a></span>
+        </div>
+        <div class="info-item">
             <span class="label">API Endpoints:</span>
             <span class="value">/mcp (MCP Protocol)</span>
         </div>
@@ -222,6 +227,7 @@ INDEX_PAGE_ENABLED_HTML = """
     <div class="nav-links">
         <a href="/token/management">Token Management</a>
         <a href="/cache/management">Cache Management</a>
+        <a href="/logs/management">MCP Log Management</a>
         <a href="/auth/demo">OAuth Demo</a>
         <a href="/ui/logout" class="logout-btn">Logout</a>
     </div>

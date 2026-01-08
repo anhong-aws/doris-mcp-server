@@ -154,6 +154,9 @@ class TokenSecurityMiddleware:
             JSONResponse with error if access is denied
         """
         
+        # Extract client IP
+        client_ip = self._get_client_ip(request)
+        
         # Check if basic auth handlers are available and if session token is valid
         if self.basic_auth_handlers:
             session_token = self.basic_auth_handlers._extract_session_token(request)
@@ -173,8 +176,6 @@ class TokenSecurityMiddleware:
                 "suggestion": "Edit tokens.json file directly or enable HTTP management with proper security configuration"
             }, status_code=403)
         
-        # Extract client IP
-        client_ip = self._get_client_ip(request)
         
         # Check IP restrictions
         if not self._is_ip_allowed(client_ip):

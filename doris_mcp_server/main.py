@@ -581,6 +581,19 @@ class DorisServer:
             from .auth.cache_handlers import CacheHandlers
             cache_handlers = CacheHandlers(self.cache_manager, self.config, basic_auth_handlers)
             
+            # MCP Log management endpoints
+            from .auth.mcp_log_handlers import MCPLogHandlers
+            mcp_log_handlers = MCPLogHandlers(self.config, basic_auth_handlers)
+            
+            async def mcp_logs(request):
+                return await mcp_log_handlers.handle_get_logs(request)
+            
+            async def mcp_logs_stats(request):
+                return await mcp_log_handlers.handle_get_log_stats(request)
+            
+            async def mcp_logs_management(request):
+                return await mcp_log_handlers.handle_log_management_page(request)
+            
             async def logout_page(request):
                 """Logout page - clears session and redirects to login"""
                 return await basic_auth_handlers.handle_logout(request)
@@ -681,6 +694,10 @@ class DorisServer:
                     Route("/cache/management", cache_management, methods=["GET"]),
                     Route("/cache/clear", cache_clear, methods=["GET", "POST"]),
                     Route("/cache/search", cache_search_keys, methods=["GET"]),
+                    # MCP Log management endpoints
+                    Route("/logs/content", mcp_logs, methods=["GET"]),
+                    Route("/logs/stats", mcp_logs_stats, methods=["GET"]),
+                    Route("/logs/management", mcp_logs_management, methods=["GET"]),
                 ],
                 lifespan=lifespan,
             )
@@ -712,6 +729,7 @@ class DorisServer:
                             path.startswith("/ui/") or
                             path.startswith("/token/") or
                             path.startswith("/cache/") or
+                            path.startswith("/logs/") or
                             path.startswith("/api/") or
                             path.startswith("/static/") or
                             path.startswith("/public/") or

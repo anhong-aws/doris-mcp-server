@@ -380,29 +380,29 @@ class DorisLoggerManager:
             app_handler.setFormatter(app_formatter)
             handlers.append(app_handler)
         
-        # Audit logger (separate from main logging)
-        if enable_audit:
-            audit_file_path = audit_file or str(self.log_dir / "doris_mcp_server_audit.log")
-            audit_logger = logging.getLogger("audit")
-            audit_logger.setLevel(logging.INFO)
+        # MCP logger (separate from main logging)
+        if enable_file:
+            mcp_file_path = str(self.log_dir / "doris_mcp_server_mcp.log")
+            mcp_logger = logging.getLogger("mcp")
+            mcp_logger.setLevel(logging.INFO)
             
-            # Clear existing audit handlers
-            for handler in audit_logger.handlers[:]:
-                audit_logger.removeHandler(handler)
+            # Clear existing mcp handlers
+            for handler in mcp_logger.handlers[:]:
+                mcp_logger.removeHandler(handler)
             
-            audit_handler = logging.handlers.RotatingFileHandler(
-                audit_file_path,
+            mcp_handler = logging.handlers.RotatingFileHandler(
+                mcp_file_path,
                 maxBytes=max_file_size,
                 backupCount=backup_count,
                 encoding='utf-8'
             )
-            audit_formatter = TimestampedFormatter(
-                fmt="%(asctime)s.%(msecs)03d [AUDIT] %(name)s - %(message)s",
+            mcp_formatter = TimestampedFormatter(
+                fmt="%(asctime)s.%(msecs)03d [MCP] %(name)s - %(message)s",
                 datefmt="%Y-%m-%d %H:%M:%S"
             )
-            audit_handler.setFormatter(audit_formatter)
-            audit_logger.addHandler(audit_handler)
-            audit_logger.propagate = False  # Don't propagate to root logger
+            mcp_handler.setFormatter(mcp_formatter)
+            mcp_logger.addHandler(mcp_handler)
+            mcp_logger.propagate = False  # Don't propagate to root logger
         
         # Add all handlers to root logger
         for handler in handlers:
@@ -473,9 +473,9 @@ class DorisLoggerManager:
         
         return self.loggers[name]
     
-    def get_audit_logger(self) -> logging.Logger:
-        """Get the audit logger"""
-        return logging.getLogger("audit")
+    def get_mcp_logger(self) -> logging.Logger:
+        """Get the MCP logger"""
+        return logging.getLogger("mcp")
     
     def log_system_info(self):
         """Log system information for debugging"""
@@ -600,6 +600,11 @@ def get_logger(name: str) -> logging.Logger:
 def get_audit_logger() -> logging.Logger:
     """Get the audit logger"""
     return _logger_manager.get_audit_logger()
+
+
+def get_mcp_logger() -> logging.Logger:
+    """Get the MCP logger"""
+    return _logger_manager.get_mcp_logger()
 
 
 def log_system_info():
