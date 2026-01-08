@@ -38,9 +38,10 @@ from ..utils.config import DorisConfig
 class TokenSecurityMiddleware:
     """Security middleware for token management endpoints"""
     
-    def __init__(self, config: DorisConfig):
+    def __init__(self, config: DorisConfig, basic_auth_handlers=None):
         self.config = config
         self.logger = get_logger(__name__)
+        self.basic_auth_handlers = basic_auth_handlers
         
         # Initialize admin token hash if provided
         self._admin_token_hash = None
@@ -175,6 +176,16 @@ class TokenSecurityMiddleware:
                 "allowed_networks": [str(net) for net in self._allowed_networks]
             }, status_code=403)
         
+        # Check if basic auth handlers are available and if session token is valid
+        if self.basic_auth_handlers:
+            session_token = self.basic_auth_handlers._extract_session_token(request)
+            if session_token:
+                session = self.basic_auth_handlers._validate_session(session_token)
+                if session:
+                    # Valid session found, grant access
+                    self.logger.info(f"Token management access granted for user {session['username']} (IP: {client_ip}) via session token to {request.url.path}")
+                    return None
+        
         # Check admin authentication if required
         if self.config.security.require_admin_auth:
             admin_token = self._extract_admin_token(request)
@@ -222,6 +233,6 @@ class TokenSecurityMiddleware:
 
 
 # Convenience function for middleware creation
-def create_token_security_middleware(config: DorisConfig) -> TokenSecurityMiddleware:
+def create_token_security_middleware(config: DorisConfig, basic_auth_handlers=None) -> TokenSecurityMiddleware:
     """Create token security middleware with configuration"""
-    return TokenSecurityMiddleware(config)
+    return TokenSecurityMiddleware(config, basic_auth_handlers)

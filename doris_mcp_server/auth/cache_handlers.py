@@ -39,12 +39,12 @@ from .token_security_middleware import TokenSecurityMiddleware
 class CacheHandlers:
     """Cache Management HTTP Handlers"""
     
-    def __init__(self, cache_manager, config: DorisConfig = None):
+    def __init__(self, cache_manager, config: DorisConfig = None, basic_auth_handlers=None):
         self.cache_manager = cache_manager
         self.logger = get_logger(__name__)
         
         if config:
-            self.security_middleware = TokenSecurityMiddleware(config)
+            self.security_middleware = TokenSecurityMiddleware(config, basic_auth_handlers)
         else:
             self.security_middleware = None
             self.logger.warning("Cache handlers initialized without security middleware - access control disabled")

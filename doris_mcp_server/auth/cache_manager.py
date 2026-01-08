@@ -134,7 +134,7 @@ class DorisCacheManager:
                 "cache_entries": []
             }
             
-            if not hasattr(self, 'metadata_cache') or not self.metadata_cache:
+            if not hasattr(self, 'metadata_cache'):
                 cache_details["success"] = False
                 cache_details["error"] = "No cache system found"
                 return cache_details

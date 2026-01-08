@@ -496,7 +496,7 @@ class DorisServer:
 
 
 
-    async def start_http(self, host: str = os.getenv("SERVER_HOST", _default_config.database.host), port: int = os.getenv("SERVER_PORT", _default_config.server_port), workers: int = 1):
+    async def start_http(self, host: str = os.getenv("SERVER_HOST", os.getenv("MCP_HOST", _default_config.server_host)), port: int = os.getenv("SERVER_PORT", _default_config.server_port), workers: int = 1):
         """Start Streamable HTTP transport mode with workers support"""
         self.logger.info(f"Starting Doris MCP Server (Streamable HTTP mode) - {host}:{port}, workers: {workers}")
 
@@ -551,9 +551,13 @@ class DorisServer:
             async def oauth_demo(request):
                 return await oauth_handlers.handle_demo_page(request)
             
+            # Basic authentication handlers
+            from .auth.basic_auth_handlers import BasicAuthHandlers
+            basic_auth_handlers = BasicAuthHandlers(self.config)
+            
             # Token management endpoints
             from .auth.token_handlers import TokenHandlers
-            token_handlers = TokenHandlers(self.security_manager, self.config)
+            token_handlers = TokenHandlers(self.security_manager, self.config, basic_auth_handlers)
             
             async def token_create(request):
                 return await token_handlers.handle_create_token(request)
@@ -575,7 +579,23 @@ class DorisServer:
             
             # Cache management endpoints
             from .auth.cache_handlers import CacheHandlers
-            cache_handlers = CacheHandlers(self.cache_manager, self.config)
+            cache_handlers = CacheHandlers(self.cache_manager, self.config, basic_auth_handlers)
+            
+            async def logout_page(request):
+                """Logout page - clears session and redirects to login"""
+                return await basic_auth_handlers.handle_logout(request)
+            
+            async def session_status(request):
+                """Check current session status"""
+                return await basic_auth_handlers.handle_session_status(request)
+            
+            async def login_page(request):
+                """Show login page"""
+                return await basic_auth_handlers.handle_login_page(request)
+            
+            async def basic_login(request):
+                """Handle basic login requests"""
+                return await basic_auth_handlers.handle_login(request)
             
             async def cache_details(request):
                 """Get detailed cache information"""
@@ -605,6 +625,18 @@ class DorisServer:
                 """Get details of a specific cache entry"""
                 return await cache_handlers.handle_get_cache_entry(request)
             
+            # Index handlers
+            from .auth.index_handlers import IndexHandlers
+            index_handlers = IndexHandlers(self.config, basic_auth_handlers)
+            
+            async def index_page(request):
+                """Index page with login check"""
+                self.logger.info(f"index_page function called with request: {request}")
+                self.logger.info(f"Request path: {request.url.path}")
+                response = await index_handlers.handle_index_page(request)
+                self.logger.info(f"index_page returning response: {response}")
+                return response
+            
             # Lifecycle manager - simplified since we manage session_manager externally
             @contextlib.asynccontextmanager
             async def lifespan(app: Starlette) -> AsyncIterator[None]:
@@ -621,12 +653,20 @@ class DorisServer:
             starlette_app = Starlette(
                 debug=True,
                 routes=[
+                    Route("/", index_page, methods=["GET"]),
+                    Route("/index", index_page, methods=["GET"]),
+                    Route("/index.html", index_page, methods=["GET"]),
                     Route("/health", health_check, methods=["GET"]),
                     # OAuth endpoints
                     Route("/auth/login", oauth_login, methods=["GET"]),
+                    Route("/ui/login/page", login_page, methods=["GET"]),
                     Route("/auth/callback", oauth_callback, methods=["GET"]),
                     Route("/auth/provider", oauth_provider_info, methods=["GET"]),
                     Route("/auth/demo", oauth_demo, methods=["GET"]),
+                    Route("/ui/logout", logout_page, methods=["GET", "POST"]),
+                    Route("/ui/session", session_status, methods=["GET"]),
+                    # API endpoints for basic authentication
+                    Route("/ui/login", basic_login, methods=["GET", "POST"]),
                     # Token management endpoints
                     Route("/token/create", token_create, methods=["GET", "POST"]),
                     Route("/token/revoke", token_revoke, methods=["GET", "DELETE"]),
@@ -655,14 +695,29 @@ class DorisServer:
                 # Handle HTTP requests
                 if scope["type"] == "http":
                     path = scope.get("path", "")
-                    self.logger.info(f"Received request for path: {path}")
+                    self.logger.info(f"Received request for path: '{path}'")
                     
                     try:
-                        # Handle health check, auth, token management, and cache management endpoints  
-                        if (path.startswith("/health") or 
+                        # Debug: Check if path matches root
+                        is_root = path == "/"
+                        is_index = path == "/index" or path == "/index.html"
+                        is_health = path.startswith("/health")
+                        self.logger.info(f"Debug: path='{path}', is_root={is_root}, is_index={is_index}, is_health={is_health}")
+                        
+                        # Handle root, index, health check, auth, ui, token management, and cache management endpoints  
+                        if (is_root or 
+                            is_index or
+                            is_health or 
                             path.startswith("/auth/") or 
+                            path.startswith("/ui/") or
                             path.startswith("/token/") or
-                            path.startswith("/cache/")):
+                            path.startswith("/cache/") or
+                            path.startswith("/api/") or
+                            path.startswith("/static/") or
+                            path.startswith("/public/") or
+                            path.startswith("/metrics") or
+                            path.startswith("/favicon.ico")):
+                            self.logger.info(f"Routing path '{path}' to starlette_app")
                             await starlette_app(scope, receive, send)
                             return
                         

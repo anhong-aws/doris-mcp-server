@@ -37,13 +37,13 @@ from .token_security_middleware import TokenSecurityMiddleware
 class TokenHandlers:
     """Token Authentication HTTP Handlers"""
     
-    def __init__(self, security_manager, config=None):
+    def __init__(self, security_manager, config=None, basic_auth_handlers=None):
         self.security_manager = security_manager
         self.logger = get_logger(__name__)
         
         # Initialize security middleware if config is provided
         if config:
-            self.security_middleware = TokenSecurityMiddleware(config)
+            self.security_middleware = TokenSecurityMiddleware(config, basic_auth_handlers)
         else:
             self.security_middleware = None
             self.logger.warning("Token handlers initialized without security middleware - access control disabled")

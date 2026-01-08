@@ -181,6 +181,12 @@ class SecurityConfig:
     oauth_roles_claim: str = "roles"  # Custom claim for roles
     oauth_default_roles: list[str] = field(default_factory=lambda: ["oauth_user"])
     
+    # Simple Username/Password Authentication
+    enable_basic_auth: bool = False  # Enable simple username/password authentication
+    basic_auth_username: str = "admin"  # Default username
+    basic_auth_password: str = ""  # Default password (should be set via environment)
+    basic_auth_password_hash: str = ""  # Pre-hashed password for better security
+    
     def __post_init__(self):
         """Initialize default OAuth scopes based on provider"""
         if not self.oauth_scopes and self.oauth_provider:
@@ -304,7 +310,7 @@ class DorisConfig:
     # Basic configuration
     server_name: str = "doris-mcp-server"
     server_version: str = "0.4.1"
-    server_host: str = "localhost"
+    server_host: str = "0.0.0.0"
     server_port: int = 3000
     transport: str = "stdio"
     
@@ -491,8 +497,16 @@ class DorisConfig:
         config.security.require_admin_auth = (
             os.getenv("REQUIRE_ADMIN_AUTH", str(config.security.require_admin_auth).lower()).lower() == "true"
         )
-
-        # Performance configuration
+        
+        # Simple Basic Authentication configuration
+        config.security.enable_basic_auth = (
+            os.getenv("ENABLE_BASIC_AUTH", str(config.security.enable_basic_auth).lower()).lower() == "true"
+        )
+        config.security.basic_auth_username = os.getenv("BASIC_AUTH_USERNAME", config.security.basic_auth_username)
+        config.security.basic_auth_password = os.getenv("BASIC_AUTH_PASSWORD", config.security.basic_auth_password)
+        config.security.basic_auth_password_hash = os.getenv("BASIC_AUTH_PASSWORD_HASH", config.security.basic_auth_password_hash)
+        
+        # OAuth configuration
         config.performance.enable_query_cache = (
             os.getenv("ENABLE_QUERY_CACHE", "true").lower() == "true"
         )
