@@ -154,6 +154,16 @@ class TokenSecurityMiddleware:
             JSONResponse with error if access is denied
         """
         
+        # Check if basic auth handlers are available and if session token is valid
+        if self.basic_auth_handlers:
+            session_token = self.basic_auth_handlers._extract_session_token(request)
+            if session_token:
+                session = self.basic_auth_handlers._validate_session(session_token)
+                if session:
+                    # Valid session found, grant access
+                    self.logger.info(f"Token management access granted for user {session['username']} (IP: {client_ip}) via session token to {request.url.path}")
+                    return None
+        
         # Check if HTTP token management is enabled
         if not self.config.security.enable_http_token_management:
             self.logger.warning(f"Token management endpoint access denied - HTTP management disabled: {request.url.path}")
@@ -175,16 +185,6 @@ class TokenSecurityMiddleware:
                 "message": "Token management is restricted to specific IP addresses",
                 "allowed_networks": [str(net) for net in self._allowed_networks]
             }, status_code=403)
-        
-        # Check if basic auth handlers are available and if session token is valid
-        if self.basic_auth_handlers:
-            session_token = self.basic_auth_handlers._extract_session_token(request)
-            if session_token:
-                session = self.basic_auth_handlers._validate_session(session_token)
-                if session:
-                    # Valid session found, grant access
-                    self.logger.info(f"Token management access granted for user {session['username']} (IP: {client_ip}) via session token to {request.url.path}")
-                    return None
         
         # Check admin authentication if required
         if self.config.security.require_admin_auth:
