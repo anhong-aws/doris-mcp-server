@@ -250,8 +250,11 @@ class DorisServer:
 
         # Import here to avoid circular imports
         from .utils.logger import get_logger
+        from .utils.mcp_call_stats import MCPCallStats
         self.logger = get_logger(f"{__name__}.DorisServer")
         self._setup_handlers()
+        # Load MCP call stats on server startup
+        MCPCallStats.load_stats()
 
     async def _extract_auth_info_from_scope(self, scope, headers):
         """Extract authentication information from ASGI scope and headers"""
@@ -880,6 +883,13 @@ class DorisServer:
             self.logger.info("Security manager shutdown completed")
             
             await self.connection_manager.close()
+            self.logger.info("Connection manager shutdown completed")
+            
+            # Save MCP call stats before shutdown
+            from .utils.mcp_call_stats import MCPCallStats
+            MCPCallStats.save_stats()
+            self.logger.info("MCP call stats saved successfully")
+            
             self.logger.info("Doris MCP Server has been shut down")
         except Exception as e:
             self.logger.error(f"Error occurred while shutting down server: {e}")
