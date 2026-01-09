@@ -39,7 +39,6 @@ from ..utils.dependency_analysis_tools import DependencyAnalysisTools
 from ..utils.performance_analytics_tools import PerformanceAnalyticsTools
 from ..utils.adbc_query_tools import DorisADBCQueryTools
 from ..utils.logger import get_logger, get_mcp_logger
-from ..utils.mcp_call_stats import MCPCallStats
 
 logger = get_logger(__name__)
 mcp_logger = get_mcp_logger()
@@ -1372,9 +1371,6 @@ No parameters required. Returns connection status, configuration, and diagnostic
             
             # Log MCP tool call
             mcp_logger.info(f"Tool called: {name}, Arguments: {arguments}")
-            
-            # Increment call count
-            MCPCallStats.increment_call_count(name)
             
             # Tool routing - dispatch requests to corresponding business logic processors
             if name == "exec_query":
