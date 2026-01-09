@@ -100,7 +100,6 @@ INDEX_PAGE_DISABLED_HTML = """
         <p><a href="/token/management">Token Management</a></p>
         <p><a href="/cache/management">Cache Management</a></p>
         <p><a href="/logs/management">MCP Log Management</a></p>
-        <p><a href="/auth/demo">OAuth Demo</a></p>
     </div>
 </body>
 </html>

@@ -373,6 +373,7 @@ CACHE_MANAGEMENT_HTML = """
 <body>
     <div class="container">
         <header>
+            <div style="margin-bottom: 15px;"><a href="/" style="color: white; text-decoration: none; font-weight: 600; font-size: 1.1em;">← Back to Home</a></div>
             <h1>Cache Management</h1>
             <p class="subtitle">Monitor and manage your Doris metadata cache</p>
         </header>

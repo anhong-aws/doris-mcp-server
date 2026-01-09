@@ -326,7 +326,8 @@ class TokenHandlers:
                 </head>
                 <body>
                     <div class="container">
-                        <h1>🔐 Token Management - Access Denied</h1>
+                    <div style="margin-bottom: 15px;"><a href="/" style="color: #007bff; text-decoration: none; font-weight: 600; font-size: 1.1em;">← Back to Home</a></div>
+                    <h1>🔐 Token Management - Access Denied</h1>
                         <div class="error">
                             <h3>Access Denied</h3>
                             <p><strong>Error:</strong> {error_info.get('error', 'Access denied')}</p>
@@ -369,6 +370,7 @@ class TokenHandlers:
                     </style>
                 </head>
                 <body>
+                    <div style="margin-bottom: 15px;"><a href="/" style="color: #007bff; text-decoration: none; font-weight: 600; font-size: 1.1em;">← Back to Home</a></div>
                     <h1>Token Management</h1>
                     <div class="error">Token authentication is not enabled on this server.</div>
                 </body>
@@ -409,6 +411,7 @@ class TokenHandlers:
             </head>
             <body>
                 <div class="container">
+                    <div style="margin-bottom: 15px;"><a href="/" style="color: #007bff; text-decoration: none; font-weight: 600; font-size: 1.1em;">← Back to Home</a></div>
                     <h1>🔐 Doris MCP Server - Token Management</h1>
                     
                     <div class="section">
@@ -669,8 +672,9 @@ class TokenHandlers:
                 <style>body {{ font-family: Arial, sans-serif; margin: 50px; }}</style>
             </head>
             <body>
-                <h1>Token Management Error</h1>
-                <p>Error loading token management page: {str(e)}</p>
+                    <div style="margin-bottom: 15px;"><a href="/" style="color: #007bff; text-decoration: none; font-weight: 600; font-size: 1.1em;">← Back to Home</a></div>
+                    <h1>Token Management Error</h1>
+                    <p>Error loading token management page: {str(e)}</p>
             </body>
             </html>
             """
