@@ -25,81 +25,232 @@ INDEX_PAGE_DISABLED_HTML = """
 <html>
 <head>
     <title>Doris MCP Server - Dashboard</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
         body {{
-            font-family: Arial, sans-serif;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             max-width: 1200px;
             margin: 0 auto;
-            padding: 20px;
-            background-color: #f5f5f5;
+            padding: 30px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            position: relative;
+            overflow-x: hidden;
         }}
+        
+        body::before {{
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-image: 
+                radial-gradient(circle at 25% 25%, rgba(255,255,255,0.1) 0%, transparent 50%),
+                radial-gradient(circle at 75% 75%, rgba(255,255,255,0.1) 0%, transparent 50%);
+            z-index: -1;
+        }}
+        
+        .container {{
+            background-color: rgba(255, 255, 255, 0.95);
+            border-radius: 12px;
+            padding: 30px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+        }}
+        
+        .cards-container {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+            gap: 30px;
+            margin-bottom: 40px;
+        }}
+        
         .header {{
-            background-color: #0066cc;
+            background: linear-gradient(135deg, #0066cc 0%, #004a99 100%);
             color: white;
-            padding: 20px;
-            border-radius: 8px;
-            margin-bottom: 20px;
+            padding: 30px;
+            border-radius: 12px;
+            margin-bottom: 30px;
+            text-align: center;
+            box-shadow: 0 6px 20px rgba(0, 102, 204, 0.3);
         }}
-        .header h1 {{ margin: 0; }}
+        
+        .header h1 {{
+            margin: 0 0 10px 0;
+            font-size: 2.5em;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 15px;
+        }}
+        
+        .header p {{
+            margin: 0;
+            font-size: 1.2em;
+            opacity: 0.9;
+        }}
+        
         .card {{
             background-color: white;
-            padding: 20px;
-            border-radius: 8px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-            margin-bottom: 20px;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+            transition: all 0.3s ease;
+            border: 1px solid #f0f0f0;
         }}
-        .card h2 {{ margin-top: 0; color: #333; }}
+        
+        .card:hover {{
+            transform: translateY(-5px);
+            box-shadow: 0 10px 30px rgba(0,0,0,0.15);
+            border-color: #0066cc;
+        }}
+        
+        .card h2 {{
+            margin-top: 0;
+            color: #333;
+            font-size: 1.5em;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }}
+        
         .status {{
             display: inline-block;
-            padding: 5px 10px;
-            border-radius: 4px;
+            padding: 8px 15px;
+            border-radius: 20px;
             font-size: 14px;
+            font-weight: 600;
+            margin-left: 10px;
         }}
+        
         .status-healthy {{
             background-color: #e6ffe6;
             color: #00cc00;
+            border: 1px solid #c8f7c5;
         }}
+        
         .warning {{
             background-color: #fff3e6;
-            padding: 15px;
-            border-left: 4px solid #cc6600;
-            margin: 20px 0;
+            padding: 20px;
+            border-left: 5px solid #cc6600;
+            margin: 25px 0;
+            border-radius: 8px;
+        }}
+        
+        .nav-links {{
+            margin-top: 30px;
+            background-color: #ffffff;
+            padding: 20px 30px;
+            border-radius: 12px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+            margin-bottom: 30px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 15px;
+            align-items: center;
+            justify-content: center;
+        }}
+        
+        .nav-links a {{
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 12px 25px;
+            background-color: #f8f9fa;
+            color: #0066cc;
+            text-decoration: none;
+            border-radius: 8px;
+            border: 2px solid transparent;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            font-size: 14px;
+        }}
+        
+        .nav-links a:hover {{
+            background-color: #e9f2ff;
+            border-color: #0066cc;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0,102,204,0.2);
+        }}
+        
+        .nav-links a i {{
+            font-size: 16px;
+        }}
+        
+        .footer {{
+            background-color: #f8f9fa;
+            padding: 25px;
+            border-radius: 12px;
+            text-align: center;
+            margin-top: 40px;
+            color: #666;
+            border-top: 2px solid #e9ecef;
+        }}
+        
+        .footer p {{
+            margin: 5px 0;
+        }}
+        
+        .server-info p {{
+            margin: 12px 0;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            color: #555;
+        }}
+        
+        .server-info i {{
+            color: #0066cc;
+            width: 20px;
+            text-align: center;
         }}
     </style>
 </head>
 <body>
+    <div class="container">
     <div class="header">
-        <h1>Apache Doris MCP Server</h1>
+        <h1><i class="fas fa-server"></i> Anhong Doris MCP Server</h1>
         <p>Enterprise Database Service - Dashboard</p>
     </div>
     
-    <div class="card">
-        <h2>Server Status</h2>
-        <p><strong>Status:</strong> <span class="status status-healthy">Running</span></p>
-        <p><strong>Server Name:</strong> doris-mcp-server</p>
-        <p><strong>Version:</strong> {version}</p>
-        <p><strong>Transport:</strong> HTTP (Streamable)</p>
+    <div class="nav-links">
+        <a href="/token/management"><i class="fas fa-key"></i> Token Management</a>
+        <a href="/cache/management"><i class="fas fa-database"></i> Cache Management</a>
+        <a href="/logs/management"><i class="fas fa-file-alt"></i> MCP Log Management</a>
     </div>
     
-    <div class="card">
-        <h2>Authentication</h2>
-        <div class="warning">
-            <strong>Warning:</strong> Basic authentication is not enabled.
-            <br><br>
-            To enable authentication, set the following environment variables:
-            <ul>
-                <li><code>ENABLE_BASIC_AUTH=true</code></li>
-                <li><code>BASIC_AUTH_USERNAME=admin</code></li>
-                <li><code>BASIC_AUTH_PASSWORD=your_password</code></li>
-            </ul>
+    <div class="cards-container">
+        <div class="card">
+            <h2><i class="fas fa-tachometer-alt"></i> Server Status</h2>
+            <div class="server-info">
+                <p><i class="fas fa-heartbeat"></i> <strong>Status:</strong> <span class="status status-healthy">Running</span></p>
+                <p><i class="fas fa-desktop"></i> <strong>Server Name:</strong> doris-mcp-server</p>
+                <p><i class="fas fa-code-branch"></i> <strong>Version:</strong> {version}</p>
+                <p><i class="fas fa-network-wired"></i> <strong>Transport:</strong> HTTP (Streamable)</p>
+            </div>
+        </div>
+        
+        <div class="card">
+            <h2><i class="fas fa-lock"></i> Authentication</h2>
+            <div class="warning">
+                <strong>Warning:</strong> Basic authentication is not enabled.
+                <br><br>
+                To enable authentication, set the following environment variables:
+                <ul>
+                    <li><code>ENABLE_BASIC_AUTH=true</code></li>
+                    <li><code>BASIC_AUTH_USERNAME=admin</code></li>
+                    <li><code>BASIC_AUTH_PASSWORD=your_password</code></li>
+                </ul>
+            </div>
         </div>
     </div>
     
-    <div class="card">
-        <h2>Quick Links</h2>
-        <p><a href="/token/management">Token Management</a></p>
-        <p><a href="/cache/management">Cache Management</a></p>
-        <p><a href="/logs/management">MCP Log Management</a></p>
+    <div class="footer">
+        <p><i class="fas fa-info-circle"></i> Anhong Doris MCP Server - Enterprise Database Management</p>
+        <p><i class="fas fa-copyright"></i> 2024 Anhong Software Foundation. All rights reserved.</p>
+        <p><small>Version {version} • Built with <i class="fas fa-heart"></i> for enterprise reliability</small></p>
+    </div>
+    
     </div>
 </body>
 </html>
@@ -110,125 +261,239 @@ INDEX_PAGE_ENABLED_HTML = """
 <html>
 <head>
     <title>Doris MCP Server - Dashboard</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
         body {{
-            font-family: Arial, sans-serif;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             max-width: 1200px;
             margin: 0 auto;
-            padding: 20px;
-            background-color: #f5f5f5;
+            padding: 30px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            position: relative;
+            overflow-x: hidden;
         }}
+        
+        body::before {{
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-image: 
+                radial-gradient(circle at 25% 25%, rgba(255,255,255,0.1) 0%, transparent 50%),
+                radial-gradient(circle at 75% 75%, rgba(255,255,255,0.1) 0%, transparent 50%);
+            z-index: -1;
+        }}
+        
+        .container {{
+            background-color: rgba(255, 255, 255, 0.95);
+            border-radius: 12px;
+            padding: 30px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+        }}
+        
         .header {{
-            background-color: #0066cc;
+            background: linear-gradient(135deg, #0066cc 0%, #004a99 100%);
             color: white;
-            padding: 20px;
-            border-radius: 8px;
-            margin-bottom: 20px;
+            padding: 30px;
+            border-radius: 12px;
+            margin-bottom: 30px;
+            text-align: center;
+            box-shadow: 0 6px 20px rgba(0, 102, 204, 0.3);
         }}
-        .header h1 {{ margin: 0; }}
+        
+        .header h1 {{
+            margin: 0 0 10px 0;
+            font-size: 2.5em;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 15px;
+        }}
+        
+        .header p {{
+            margin: 0;
+            font-size: 1.2em;
+            opacity: 0.9;
+        }}
+        
         .card {{
             background-color: white;
-            padding: 20px;
-            border-radius: 8px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-            margin-bottom: 20px;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+            transition: all 0.3s ease;
+            border: 1px solid #f0f0f0;
         }}
-        .card h2 {{ margin-top: 0; color: #333; }}
-        .info-item {{
-            padding: 10px;
-            border-bottom: 1px solid #eee;
+        
+        .card:hover {{
+            transform: translateY(-5px);
+            box-shadow: 0 10px 30px rgba(0,0,0,0.15);
+            border-color: #0066cc;
         }}
-        .info-item:last-child {{ border-bottom: none; }}
-        .label {{ font-weight: bold; color: #666; }}
+        
+        .card h2 {{
+            margin-top: 0;
+            color: #333;
+            font-size: 1.5em;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }}
+        
         .status {{
             display: inline-block;
-            padding: 5px 10px;
-            border-radius: 4px;
+            padding: 8px 15px;
+            border-radius: 20px;
             font-size: 14px;
+            font-weight: 600;
+            margin-left: 10px;
         }}
+        
         .status-healthy {{
             background-color: #e6ffe6;
             color: #00cc00;
+            border: 1px solid #c8f7c5;
         }}
-        .nav-links {{ margin-top: 20px; }}
+        
+        .nav-links {{
+            margin-top: 30px;
+            background-color: #ffffff;
+            padding: 20px 30px;
+            border-radius: 12px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+            margin-bottom: 30px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 15px;
+            align-items: center;
+            justify-content: center;
+        }}
+        
         .nav-links a {{
-            display: inline-block;
-            margin-right: 15px;
-            padding: 10px 20px;
-            background-color: #0066cc;
-            color: white;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 12px 25px;
+            background-color: #f8f9fa;
+            color: #0066cc;
             text-decoration: none;
-            border-radius: 4px;
+            border-radius: 8px;
+            border: 2px solid transparent;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            font-size: 14px;
         }}
-        .nav-links a:hover {{ background-color: #0052a3; }}
-        .logout-btn {{ background-color: #cc0000 !important; }}
-        .logout-btn:hover {{ background-color: #a30000 !important; }}
+        
+        .nav-links a:hover {{
+            background-color: #e9f2ff;
+            border-color: #0066cc;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0,102,204,0.2);
+        }}
+        
+        .logout-btn {{
+            background-color: #fff5f5 !important;
+            color: #dc3545 !important;
+            border-color: #ffd7da !important;
+            margin-left: auto;
+        }}
+        
+        .logout-btn:hover {{
+            background-color: #ffebee !important;
+            border-color: #dc3545 !important;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(220,53,69,0.15);
+        }}
+        
+        .cards-container {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+            gap: 30px;
+            margin-bottom: 40px;
+        }}
+        
+        .server-info p {{
+            margin: 12px 0;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            color: #555;
+        }}
+        
+        .server-info i {{
+            color: #0066cc;
+            width: 20px;
+            text-align: center;
+        }}
+        
+        .footer {{
+            background-color: #f8f9fa;
+            padding: 25px;
+            border-radius: 12px;
+            text-align: center;
+            margin-top: 40px;
+            color: #666;
+            border-top: 2px solid #e9ecef;
+        }}
+        
+        .footer p {{
+            margin: 5px 0;
+        }}
     </style>
 </head>
 <body>
+    <div class="container">
     <div class="header">
-        <h1>Apache Doris MCP Server</h1>
+        <h1><i class="fas fa-server"></i> Anhong Doris MCP Server</h1>
         <p>Enterprise Database Service - Dashboard</p>
     </div>
     
-    <div class="card">
-        <h2>Server Status</h2>
-        <div class="info-item">
-            <span class="label">Status:</span>
-            <span class="status status-healthy">Healthy</span>
-        </div>
-        <div class="info-item">
-            <span class="label">Server Name:</span>
-            <span class="value">doris-mcp-server</span>
-        </div>
-        <div class="info-item">
-            <span class="label">Version:</span>
-            <span class="value">{version}</span>
-        </div>
-        <div class="info-item">
-            <span class="label">Transport:</span>
-            <span class="value">HTTP (Streamable)</span>
-        </div>
-    </div>
-    
-    <div class="card">
-        <h2>Authentication Info</h2>
-        <div class="info-item">
-            <span class="label">Username:</span>
-            <span class="value">{username}</span>
-        </div>
-        <div class="info-item">
-            <span class="label">Session Status:</span>
-            <span class="status status-healthy">Active</span>
-        </div>
-    </div>
-    
-    <div class="card">
-        <h2>Quick Links</h2>
-        <div class="info-item">
-            <span class="label">Token Management:</span>
-            <span class="value"><a href="/token/management">Manage Tokens</a></span>
-        </div>
-        <div class="info-item">
-            <span class="label">Cache Management:</span>
-            <span class="value"><a href="/cache/management">Manage Cache</a></span>
-        </div>
-        <div class="info-item">
-            <span class="label">MCP Log Management:</span>
-            <span class="value"><a href="/logs/management">View MCP Logs</a></span>
-        </div>
-        <div class="info-item">
-            <span class="label">API Endpoints:</span>
-            <span class="value">/mcp (MCP Protocol)</span>
-        </div>
-    </div>
-    
     <div class="nav-links">
-        <a href="/token/management">Token Management</a>
-        <a href="/cache/management">Cache Management</a>
-        <a href="/logs/management">MCP Log Management</a>
-        <a href="/auth/demo">OAuth Demo</a>
-        <a href="/ui/logout" class="logout-btn">Logout</a>
+        <a href="/token/management"><i class="fas fa-key"></i> Token Management</a>
+        <a href="/cache/management"><i class="fas fa-database"></i> Cache Management</a>
+        <a href="/logs/management"><i class="fas fa-file-alt"></i> MCP Log Management</a>
+        <a href="/ui/logout" class="logout-btn"><i class="fas fa-sign-out-alt"></i> Logout</a>
+    </div>
+    
+    <div class="cards-container">
+        <div class="card">
+            <h2><i class="fas fa-tachometer-alt"></i> Server Status</h2>
+            <div class="server-info">
+                <p><i class="fas fa-heartbeat"></i> <strong>Status:</strong> <span class="status status-healthy">Healthy</span></p>
+                <p><i class="fas fa-desktop"></i> <strong>Server Name:</strong> doris-mcp-server</p>
+                <p><i class="fas fa-code-branch"></i> <strong>Version:</strong> {version}</p>
+                <p><i class="fas fa-network-wired"></i> <strong>Transport:</strong> HTTP (Streamable)</p>
+            </div>
+        </div>
+        
+        <div class="card">
+            <h2><i class="fas fa-user-circle"></i> Authentication Info</h2>
+            <div class="server-info">
+                <p><i class="fas fa-user"></i> <strong>Username:</strong> {username}</p>
+                <p><i class="fas fa-check-circle"></i> <strong>Session Status:</strong> <span class="status status-healthy">Active</span></p>
+            </div>
+        </div>
+        
+        <div class="card">
+            <h2><i class="fas fa-link"></i> Quick Links</h2>
+            <div class="server-info">
+                <p><i class="fas fa-key"></i> <strong>Token Management:</strong> <a href="/token/management">Manage Tokens</a></p>
+                <p><i class="fas fa-database"></i> <strong>Cache Management:</strong> <a href="/cache/management">Manage Cache</a></p>
+                <p><i class="fas fa-file-alt"></i> <strong>MCP Log Management:</strong> <a href="/logs/management">View MCP Logs</a></p>
+                <p><i class="fas fa-terminal"></i> <strong>API Endpoints:</strong> /mcp (MCP Protocol)</p>
+            </div>
+        </div>
+    </div>
+    
+    <div class="footer">
+        <p><i class="fas fa-info-circle"></i> Anhong Doris MCP Server - Enterprise Database Management</p>
+        <p><i class="fas fa-copyright"></i> 2024 Anhong Software Foundation. All rights reserved.</p>
+        <p><small>Version {version} • Built with <i class="fas fa-heart"></i> for enterprise reliability</small></p>
+    </div>
+    
     </div>
 </body>
 </html>
@@ -325,19 +590,19 @@ LOGIN_PAGE_HTML = """
             
             <div class="form-group">
                 <label for="username">Username</label>
-                <input type="text" id="username" name="username" required autofocus>
+                <input type="text" id="username" name="username" value="admin" required autofocus>
             </div>
             
             <div class="form-group">
                 <label for="password">Password</label>
-                <input type="password" id="password" name="password" required>
+                <input type="password" id="password" name="password" value="123" required>
             </div>
             
             <button type="submit" class="submit-btn">Sign In</button>
         </form>
         
         <div class="server-info">
-            Apache Doris MCP Server
+            Anhong Doris MCP Server
         </div>
     </div>
     
