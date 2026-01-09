@@ -882,13 +882,13 @@ class DorisServer:
             await self.security_manager.shutdown()
             self.logger.info("Security manager shutdown completed")
             
-            await self.connection_manager.close()
-            self.logger.info("Connection manager shutdown completed")
-            
             # Save MCP call stats before shutdown
             from .utils.mcp_call_stats import MCPCallStats
             MCPCallStats.save_stats()
             self.logger.info("MCP call stats saved successfully")
+
+            await self.connection_manager.close()
+            self.logger.info("Connection manager shutdown completed")
             
             self.logger.info("Doris MCP Server has been shut down")
         except Exception as e:

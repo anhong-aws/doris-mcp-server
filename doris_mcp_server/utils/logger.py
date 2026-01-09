@@ -383,7 +383,7 @@ class DorisLoggerManager:
         # MCP logger (separate from main logging)
         if enable_file:
             mcp_file_path = str(self.log_dir / "doris_mcp_server_mcp.log")
-            mcp_logger = logging.getLogger("mcp")
+            mcp_logger = logging.getLogger("bimcp")
             mcp_logger.setLevel(logging.INFO)
             
             # Clear existing mcp handlers
@@ -394,7 +394,8 @@ class DorisLoggerManager:
                 mcp_file_path,
                 maxBytes=max_file_size,
                 backupCount=backup_count,
-                encoding='utf-8'
+                encoding='utf-8',
+                mode='a'
             )
             mcp_formatter = TimestampedFormatter(
                 fmt="%(asctime)s.%(msecs)03d [MCP] %(name)s - %(message)s",
@@ -475,7 +476,7 @@ class DorisLoggerManager:
     
     def get_mcp_logger(self) -> logging.Logger:
         """Get the MCP logger"""
-        return logging.getLogger("mcp")
+        return logging.getLogger("bimcp")
     
     def log_system_info(self):
         """Log system information for debugging"""

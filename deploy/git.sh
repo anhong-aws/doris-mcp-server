@@ -1,3 +1,3 @@
 git add .
-git commit -m "bi 首页，登录页 20250109"
+git commit -m "bi 日志优化 20250110"
 git push origin master

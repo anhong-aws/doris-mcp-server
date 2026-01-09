@@ -61,8 +61,8 @@ find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
 find . -type f -name "*.pyc" -delete 2>/dev/null || true
 echo -e "${CYAN}Cleaning temporary files...${NC}"
 rm -rf .pytest_cache 2>/dev/null || true
-echo -e "${CYAN}Cleaning log files...${NC}"
-find ./logs -type f -name "*.log" -delete 2>/dev/null || true
+# echo -e "${CYAN}Cleaning log files...${NC}"
+# find ./logs -type f -name "*.log" -delete 2>/dev/null || true
 
 # Create necessary directories
 mkdir -p logs

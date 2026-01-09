@@ -219,16 +219,15 @@ class MCPLogHandlers:
                 <tr data-method="{log['method']}">
                     <td>{log['timestamp']}</td>
                     <td><span class="method-badge">{log['method']}</span></td>
-                    <td><div class="arguments">{json.dumps(log['arguments'])}</div></td>
-                    <td>{log['message']}</td>
+                    <td><div class="arguments">{json.dumps(log['arguments'], ensure_ascii=False)}</div></td>
                 </tr>
                 """)
             logs_rows_html = "\n".join(logs_rows)
             
             # Generate chart data
-            method_stats_json = json.dumps(call_stats.get("method_totals", {}))
-            daily_stats_json = json.dumps(daily_stats.get("daily_counts", {}))
-            logs_json = json.dumps(logs[:100])  # Limit for initial load
+            method_stats_json = json.dumps(call_stats.get("method_totals", {}), ensure_ascii=False)
+            daily_stats_json = json.dumps(daily_stats.get("daily_counts", {}), ensure_ascii=False)
+            logs_json = json.dumps(logs[:100], ensure_ascii=False)  # Limit for initial load
             
             # Calculate total calls
             total_calls = sum(call_stats.get("method_totals", {}).values())
