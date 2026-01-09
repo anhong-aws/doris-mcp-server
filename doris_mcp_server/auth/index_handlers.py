@@ -60,12 +60,12 @@ class IndexHandlers:
         session_token = self.basic_auth_handlers._extract_session_token(request)
         
         if not session_token:
-            return RedirectResponse(url="/ui/login/page?error=none session token+expired", status_code=302)
+            return RedirectResponse(url="/ui/login/page", status_code=302)
         
         session = self.basic_auth_handlers._validate_session(session_token)
         
         if not session:
-            return RedirectResponse(url="/ui/login/page?error=Session+expired", status_code=302)
+            return RedirectResponse(url="/ui/login/page", status_code=302)
         
         html_content = INDEX_PAGE_ENABLED_HTML.format(
             version=self._get_version(),
