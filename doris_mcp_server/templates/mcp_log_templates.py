@@ -347,7 +347,6 @@ MCP_LOG_MANAGEMENT_HTML = """
                             <th>Timestamp</th>
                             <th>Method</th>
                             <th>Arguments</th>
-                            <th>Message</th>
                         </tr>
                     </thead>
                     <tbody id="logsBody">
