@@ -215,11 +215,13 @@ class MCPLogHandlers:
             # Generate log rows
             logs_rows = []
             for log in logs:
+                session_id = log.get('mcp_session_id', '')
                 logs_rows.append(f"""
                 <tr data-method="{log['method']}">
                     <td>{log['timestamp']}</td>
                     <td><span class="method-badge">{log['method']}</span></td>
                     <td><div class="arguments">{json.dumps(log['arguments'], ensure_ascii=False)}</div></td>
+                    <td>{session_id}</td>
                 </tr>
                 """)
             logs_rows_html = "\n".join(logs_rows)

@@ -3,6 +3,9 @@
 # MCP server URL
 MCP_URL="http://localhost:3000/mcp"
 
+# Authorization token (Bearer token)
+AUTH_TOKEN="doris_readonly_token_123456"
+
 echo "=== Doris MCP Server Curl Example (text/event-stream) ==="
 echo "Server URL: $MCP_URL"
 
@@ -11,6 +14,7 @@ echo -e "\n1. Initializing MCP connection..."
 INIT_RESPONSE=$(curl -s -i -X POST $MCP_URL \
   -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
+  ${AUTH_TOKEN:+-H "Authorization: Bearer $AUTH_TOKEN"} \
   -d '{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2024-11-05", "capabilities": {}, "clientInfo": {"name": "curl-test", "version": "1.0.0"}}}'
 )
 
@@ -34,6 +38,7 @@ TOOLS_RESPONSE=$(curl -s -i -X POST $MCP_URL \
   -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
   -H "mcp-session-id: $SESSION_ID" \
+  ${AUTH_TOKEN:+-H "Authorization: Bearer $AUTH_TOKEN"} \
   -d '{"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}'
 )
 
@@ -47,8 +52,8 @@ QUERY_RESPONSE=$(curl -s -i -X POST $MCP_URL \
   -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
   -H "mcp-session-id: $SESSION_ID" \
-  -d '{"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "get_db_table_list", "arguments": {"db_name": "dw_power"}}}'
-)
+  ${AUTH_TOKEN:+-H "Authorization: Bearer $AUTH_TOKEN"} \
+  -d '{"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "get_db_table_list", "arguments": {"db_name": "dw_power"}}}')
 
 # Print full response with headers
 echo -e "\n=== exec_query Response (Headers + Body) ==="
@@ -60,8 +65,8 @@ QUERY_RESPONSE=$(curl -s -i -X POST $MCP_URL \
   -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
   -H "mcp-session-id: $SESSION_ID" \
-  -d '{"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "exec_query", "arguments": {"sql": "SHOW DATABASES"}}}'
-)
+  ${AUTH_TOKEN:+-H "Authorization: Bearer $AUTH_TOKEN"} \
+  -d '{"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "exec_query", "arguments": {"sql": "SHOW DATABASES"}}}')
 
 # Print full response with headers
 echo -e "\n=== exec_query Response (Headers + Body) ==="
@@ -70,6 +75,6 @@ echo "$QUERY_RESPONSE"
 # Step 4: Optional - Establish text/event-stream connection (for server notifications)
 echo -e "\n4. Optional: Establishing text/event-stream connection..."
 echo "To receive server notifications, run in a separate terminal:"
-echo "curl -N -H 'Accept: text/event-stream' -H 'mcp-session-id: $SESSION_ID' $MCP_URL"
+echo "curl -N -H 'Accept: text/event-stream' -H 'mcp-session-id: $SESSION_ID' ${AUTH_TOKEN:+-H 'Authorization: Bearer $AUTH_TOKEN'} $MCP_URL"
 
 echo -e "\n=== Example completed ==="

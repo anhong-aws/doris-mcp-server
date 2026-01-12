@@ -108,6 +108,7 @@ class MCPLogReader:
                             "message": message,
                             "method": log_method,
                             "arguments": method_info["arguments"],
+                            "mcp_session_id": method_info.get("mcp_session_id"),
                             "raw": line
                         }
                         
@@ -116,8 +117,7 @@ class MCPLogReader:
                         if len(logs) >= limit:
                             break
             
-            # Reverse to get chronological order
-            logs.reverse()
+            # Keep reverse order (newest first)
             
             return {
                 "success": True,
@@ -144,10 +144,10 @@ class MCPLogReader:
             message: Log message
             
         Returns:
-            Dict containing method name and arguments
+            Dict containing method name, arguments, and mcp_session_id
         """
-        # Match "Tool called: method_name, Arguments: {...}"
-        method_pattern = r"Tool called: ([\w_]+), Arguments: ({.*?})$"
+        # Match "Tool called: method_name, Arguments: {...}, MCP Session ID: {session_id}"
+        method_pattern = r"Tool called: ([\w_]+), Arguments: ({.*?})(?:, MCP Session ID: (.*?))?$"
         match = re.search(method_pattern, message)
         
         if match:
@@ -162,12 +162,14 @@ class MCPLogReader:
             
             return {
                 "method": method,
-                "arguments": args
+                "arguments": args,
+                "mcp_session_id": match.group(3)
             }
         
         return {
             "method": "unknown",
-            "arguments": {}
+            "arguments": {},
+            "mcp_session_id": None
         }
     
     def get_call_statistics(self, days: int = 7) -> Dict[str, Any]:

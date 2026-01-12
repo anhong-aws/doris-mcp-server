@@ -347,6 +347,7 @@ MCP_LOG_MANAGEMENT_HTML = """
                             <th>Timestamp</th>
                             <th>Method</th>
                             <th>Arguments</th>
+                            <th>MCP Session ID</th>
                         </tr>
                     </thead>
                     <tbody id="logsBody">
@@ -457,9 +458,11 @@ MCP_LOG_MANAGEMENT_HTML = """
             
             rows.forEach(row => {
                 const method = row.getAttribute('data-method');
-                const message = row.querySelector('td:last-child').textContent.toLowerCase();
+                // Search in arguments and session ID columns
+                const argumentsText = row.querySelectorAll('td')[2].textContent.toLowerCase();
+                const sessionIdText = row.querySelectorAll('td')[3].textContent.toLowerCase();
                 
-                const matchesSearch = message.includes(searchTerm);
+                const matchesSearch = argumentsText.includes(searchTerm) || sessionIdText.includes(searchTerm);
                 const matchesMethod = methodFilter === '' || method === methodFilter;
                 
                 if (matchesSearch && matchesMethod) {

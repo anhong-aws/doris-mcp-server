@@ -35,10 +35,10 @@ class DorisToolsManager:
         self.monitoring_tools = DorisMonitoringTools(connection_manager)
  
 
-    async def list_tools(self) -> List[Tool]:
+    async def list_tools(self, mcp_session_id: str = None) -> List[Tool]:
         """List all available query tools (for stdio mode)"""
         # Log MCP tool call
-        mcp_logger.info(f"Tool called: list_tools, Arguments: {{}}")
+        mcp_logger.info(f"Tool called: list_tools, Arguments: {{}}, MCP Session ID: {mcp_session_id}")
         
         # Increment call count
         MCPCallStats.increment_call_count("list_tools")
@@ -114,7 +114,7 @@ class DorisToolsManager:
         
         return tools
         
-    async def call_tool(self, name: str, arguments: Dict[str, Any]) -> str:
+    async def call_tool(self, name: str, arguments: Dict[str, Any], mcp_session_id: str = None) -> str:
         """
         Call the specified query tool (tool routing and scheduling center)
         """
@@ -122,7 +122,7 @@ class DorisToolsManager:
             start_time = time.time()
             
             # Log MCP tool call
-            mcp_logger.info(f"Tool called: {name}, Arguments: {arguments}")
+            mcp_logger.info(f"Tool called: {name}, Arguments: {arguments}, MCP Session ID: {mcp_session_id}")
             
             # Increment call count
             MCPCallStats.increment_call_count(name)

@@ -365,8 +365,15 @@ class DorisServer:
         async def handle_list_tools() -> list[Tool]:
             """Handle tool list request"""
             try:
-                self.logger.info("Handling tool list request")
-                tools = await self.tools_manager.list_tools()
+                self.logger.info(f"Handling tool list request")
+                ctx = self.server.request_context
+                headers = {}
+                if ctx and ctx.request:
+                    # ctx.request 是 transport 提供的 request（StreamableHTTP 下为 Starlette Request）
+                    headers = dict(ctx.request.headers)
+                mcp_session_id = headers.get("mcp-session-id")
+                self.logger.info(f"MCP Session ID: {mcp_session_id}")
+                tools = await self.tools_manager.list_tools(mcp_session_id)
                 self.logger.info(f"Returning {len(tools)} tools")
                 return tools
             except Exception as e:
@@ -380,7 +387,14 @@ class DorisServer:
             """Handle tool call request"""
             try:
                 self.logger.info(f"Handling tool call request: {name}")
-                result = await self.tools_manager.call_tool(name, arguments)
+                ctx = self.server.request_context
+                headers = {}
+                if ctx and ctx.request:
+                    # ctx.request 是 transport 提供的 request（StreamableHTTP 下为 Starlette Request）
+                    headers = dict(ctx.request.headers)
+                mcp_session_id = headers.get("mcp-session-id")
+                self.logger.info(f"MCP Session ID: {mcp_session_id}")
+                result = await self.tools_manager.call_tool(name, arguments, mcp_session_id)
 
                 return [TextContent(type="text", text=result)]
             except Exception as e:
