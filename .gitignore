@@ -21,4 +21,4 @@ venv.bak/
 .idea/
 .coverage
 coverage.xml
-doc/evn.txt
+doc/env1.txt
