@@ -21,3 +21,4 @@ venv.bak/
 .idea/
 .coverage
 coverage.xml
+doc/evn.txt
