@@ -1,3 +1,3 @@
 git add .
-git commit -m "bi 日志增加mcp session id记录 20250110"
+git commit -m "bi 增加获取工件信息服务 20250112"
 git push origin master

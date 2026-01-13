@@ -17,6 +17,7 @@ from ..utils.monitoring_tools import DorisMonitoringTools
 from ..utils.bi_schema_extractor import MetadataExtractor
 from ..utils.logger import get_logger, get_mcp_logger
 from ..utils.mcp_call_stats import MCPCallStats
+from .artifact_instructions import ArtifactInstructionsTool
 
 logger = get_logger(__name__)
 mcp_logger = get_mcp_logger()
@@ -33,6 +34,7 @@ class DorisToolsManager:
         self.query_executor = DorisQueryExecutor(connection_manager)
         self.metadata_extractor = MetadataExtractor(connection_manager=connection_manager, cache_manager=cache_manager)
         self.monitoring_tools = DorisMonitoringTools(connection_manager)
+        self.artifact_instructions_tool = ArtifactInstructionsTool()
  
 
     async def list_tools(self, mcp_session_id: str = None) -> List[Tool]:
@@ -110,6 +112,7 @@ class DorisToolsManager:
                     },
                 },
             ),
+            self.artifact_instructions_tool.get_tool_definition(),
         ]
         
         return tools
@@ -134,18 +137,20 @@ class DorisToolsManager:
                 result = await self._get_table_schema_tool(arguments)
             elif name == "get_db_table_list":
                 result = await self._get_db_table_list_tool(arguments)
+            elif name == "get_artifact_instructions":
+                result = await self._get_artifact_instructions_tool(arguments)
             else:
                 raise ValueError(f"Unknown tool: {name}")
-            
-            execution_time = time.time() - start_time
-            
-            # Add execution information
-            if isinstance(result, dict):
-                result["_execution_info"] = {
-                    "tool_name": name,
-                    "execution_time": round(execution_time, 3),
-                    "timestamp": datetime.now().isoformat(),
-                }
+            if name != "get_artifact_instructions":
+                execution_time = time.time() - start_time
+                
+                # Add execution information
+                if isinstance(result, dict):
+                    result["_execution_info"] = {
+                        "tool_name": name,
+                        "execution_time": round(execution_time, 3),
+                        "timestamp": datetime.now().isoformat(),
+                    }
             
             return json.dumps(result, ensure_ascii=False, indent=2)
             
@@ -189,5 +194,10 @@ class DorisToolsManager:
         
         # Delegate to metadata extractor for processing
         return await self.metadata_extractor.get_db_table_list_for_mcp(db_name)
+    
+    async def _get_artifact_instructions_tool(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
+        """Get artifact instructions tool routing"""
+        # Delegate to artifact instructions tool for processing
+        return await self.artifact_instructions_tool.execute(arguments)
     
     
