@@ -602,6 +602,10 @@ class DorisServer:
             from .auth.mcp_log_handlers import MCPLogHandlers
             mcp_log_handlers = MCPLogHandlers(self.config, basic_auth_handlers)
             
+            # Configuration management endpoints
+            from .auth.config_handlers import ConfigHandlers
+            config_handlers = ConfigHandlers(self.config, basic_auth_handlers)
+            
             async def mcp_logs(request):
                 return await mcp_log_handlers.handle_get_logs(request)
             
@@ -654,6 +658,23 @@ class DorisServer:
             async def cache_entry_detail(request):
                 """Get details of a specific cache entry"""
                 return await cache_handlers.handle_get_cache_entry(request)
+            
+            # Configuration management endpoints
+            async def config_management(request):
+                """Configuration management page"""
+                return await config_handlers.handle_config_management_page(request)
+            
+            async def config_details(request):
+                """Get configuration details"""
+                return await config_handlers.handle_get_config_details(request)
+            
+            async def get_env_content(request):
+                """Get .env file content"""
+                return await config_handlers.handle_get_env_content(request)
+            
+            async def save_env(request):
+                """Save .env file"""
+                return await config_handlers.handle_save_env_file(request)
             
             # Index handlers
             from .auth.index_handlers import IndexHandlers
@@ -715,6 +736,11 @@ class DorisServer:
                     Route("/logs/content", mcp_logs, methods=["GET"]),
                     Route("/logs/stats", mcp_logs_stats, methods=["GET"]),
                     Route("/logs/management", mcp_logs_management, methods=["GET"]),
+                    # Configuration management endpoints
+                    Route("/config/management", config_management, methods=["GET"]),
+                    Route("/config/details", config_details, methods=["GET"]),
+                    Route("/config/env-content", get_env_content, methods=["GET"]),
+                    Route("/config/save-env", save_env, methods=["POST"]),
                 ],
                 lifespan=lifespan,
             )
@@ -747,6 +773,7 @@ class DorisServer:
                             path.startswith("/token/") or
                             path.startswith("/cache/") or
                             path.startswith("/logs/") or
+                            path.startswith("/config/") or
                             path.startswith("/api/") or
                             path.startswith("/static/") or
                             path.startswith("/public/") or

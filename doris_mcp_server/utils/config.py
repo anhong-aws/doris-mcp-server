@@ -718,70 +718,75 @@ class DorisConfig:
                 "max_connection_age": self.database.max_connection_age,
             },
             "security": {
-                "auth_type": self.security.auth_type,
-                "token_secret": "***",  # Hide secret key
-                "token_expiry": self.security.token_expiry,
-                "enable_security_check": self.security.enable_security_check,
-                "blocked_keywords": self.security.blocked_keywords,
-                "max_query_complexity": self.security.max_query_complexity,
-                "max_result_rows": self.security.max_result_rows,
-                "sensitive_tables": self.security.sensitive_tables,
-                "enable_masking": self.security.enable_masking,
-                "masking_rules": len(self.security.masking_rules),
-            },
-            "performance": {
-                "enable_query_cache": self.performance.enable_query_cache,
-                "cache_ttl": self.performance.cache_ttl,
-                "max_cache_size": self.performance.max_cache_size,
-                "max_concurrent_queries": self.performance.max_concurrent_queries,
-                "query_timeout": self.performance.query_timeout,
-                "connection_pool_size": self.performance.connection_pool_size,
-                "idle_timeout": self.performance.idle_timeout,
-                "max_response_content_size": self.performance.max_response_content_size,
-            },
-            "data_quality": {
-                "max_columns_per_batch": self.data_quality.max_columns_per_batch,
-                "default_sample_size": self.data_quality.default_sample_size,
-                "small_table_threshold": self.data_quality.small_table_threshold,
-                "medium_table_threshold": self.data_quality.medium_table_threshold,
-                "enable_batch_analysis": self.data_quality.enable_batch_analysis,
-                "batch_timeout": self.data_quality.batch_timeout,
-                "enable_fast_mode": self.data_quality.enable_fast_mode,
-                "fast_mode_sample_size": self.data_quality.fast_mode_sample_size,
-                "enable_distribution_analysis": self.data_quality.enable_distribution_analysis,
-                "histogram_bins": self.data_quality.histogram_bins,
-                "percentile_levels": self.data_quality.percentile_levels,
-            },
-            "logging": {
-                "level": self.logging.level,
-                "format": self.logging.format,
-                "file_path": self.logging.file_path,
-                "max_file_size": self.logging.max_file_size,
-                "backup_count": self.logging.backup_count,
-                "enable_audit": self.logging.enable_audit,
-                "audit_file_path": self.logging.audit_file_path,
-                "enable_cleanup": self.logging.enable_cleanup,
-                "max_age_days": self.logging.max_age_days,
-                "cleanup_interval_hours": self.logging.cleanup_interval_hours,
-            },
-            "monitoring": {
-                "enable_metrics": self.monitoring.enable_metrics,
-                "metrics_port": self.monitoring.metrics_port,
-                "metrics_path": self.monitoring.metrics_path,
-                "health_check_port": self.monitoring.health_check_port,
-                "health_check_path": self.monitoring.health_check_path,
-                "enable_alerts": self.monitoring.enable_alerts,
-                "alert_webhook_url": self.monitoring.alert_webhook_url,
-            },
-            "adbc": {
-                "default_max_rows": self.adbc.default_max_rows,
-                "default_timeout": self.adbc.default_timeout,
-                "default_return_format": self.adbc.default_return_format,
-                "connection_timeout": self.adbc.connection_timeout,
-                "enabled": self.adbc.enabled,
-            },
-            "custom": self.custom_config,
-        }
+            "auth_type": self.security.auth_type,
+            "enable_token_auth": self.security.enable_token_auth,
+            "enable_jwt_auth": self.security.enable_jwt_auth,
+            "enable_oauth_auth": self.security.enable_oauth_auth,
+            "enable_basic_auth": self.security.enable_basic_auth,
+            "token_secret": "***",  # Hide secret key
+            "token_expiry": self.security.token_expiry,
+            "enable_security_check": self.security.enable_security_check,
+            "blocked_keywords": self.security.blocked_keywords,
+            "max_query_complexity": self.security.max_query_complexity,
+            "max_result_rows": self.security.max_result_rows,
+            "sensitive_tables": self.security.sensitive_tables,
+            "enable_masking": self.security.enable_masking,
+            "masking_rules": len(self.security.masking_rules),
+        },
+        "performance": {
+            "enable_query_cache": self.performance.enable_query_cache,
+            "enable_metadata_cache": self.performance.enable_metadata_cache,
+            "cache_ttl": self.performance.cache_ttl,
+            "max_cache_size": self.performance.max_cache_size,
+            "max_concurrent_queries": self.performance.max_concurrent_queries,
+            "query_timeout": self.performance.query_timeout,
+            "connection_pool_size": self.performance.connection_pool_size,
+            "idle_timeout": self.performance.idle_timeout,
+            "max_response_content_size": self.performance.max_response_content_size,
+        },
+        "data_quality": {
+            "max_columns_per_batch": self.data_quality.max_columns_per_batch,
+            "default_sample_size": self.data_quality.default_sample_size,
+            "small_table_threshold": self.data_quality.small_table_threshold,
+            "medium_table_threshold": self.data_quality.medium_table_threshold,
+            "enable_batch_analysis": self.data_quality.enable_batch_analysis,
+            "batch_timeout": self.data_quality.batch_timeout,
+            "enable_fast_mode": self.data_quality.enable_fast_mode,
+            "fast_mode_sample_size": self.data_quality.fast_mode_sample_size,
+            "enable_distribution_analysis": self.data_quality.enable_distribution_analysis,
+            "histogram_bins": self.data_quality.histogram_bins,
+            "percentile_levels": self.data_quality.percentile_levels,
+        },
+        "logging": {
+            "level": self.logging.level,
+            "format": self.logging.format,
+            "file_path": self.logging.file_path,
+            "max_file_size": self.logging.max_file_size,
+            "backup_count": self.logging.backup_count,
+            "enable_audit": self.logging.enable_audit,
+            "audit_file_path": self.logging.audit_file_path,
+            "enable_cleanup": self.logging.enable_cleanup,
+            "max_age_days": self.logging.max_age_days,
+            "cleanup_interval_hours": self.logging.cleanup_interval_hours,
+        },
+        "monitoring": {
+            "enable_metrics": self.monitoring.enable_metrics,
+            "metrics_port": self.monitoring.metrics_port,
+            "metrics_path": self.monitoring.metrics_path,
+            "health_check_port": self.monitoring.health_check_port,
+            "health_check_path": self.monitoring.health_check_path,
+            "enable_alerts": self.monitoring.enable_alerts,
+            "alert_webhook_url": self.monitoring.alert_webhook_url,
+        },
+        "adbc": {
+            "default_max_rows": self.adbc.default_max_rows,
+            "default_timeout": self.adbc.default_timeout,
+            "default_return_format": self.adbc.default_return_format,
+            "connection_timeout": self.adbc.connection_timeout,
+            "enabled": self.adbc.enabled,
+        },
+        "custom": self.custom_config,
+    }
 
     def save_to_file(self, config_path: str):
         """Save configuration to file"""
@@ -926,6 +931,61 @@ class DorisConfig:
                 "alerts_enabled": self.monitoring.enable_alerts,
             },
         }
+
+    def get_env_file_path(self) -> str:
+        """Get the path to the .env file"""
+        # Check common .env file locations
+        env_files = [".env", ".env.local", ".env.production", ".env.development"]
+        for env_path in env_files:
+            if Path(env_path).exists():
+                return env_path
+        # If no .env file found, return default
+        return ".env"
+
+    def load_env_file_content(self) -> str:
+        """Load the content of the .env file"""
+        env_path = self.get_env_file_path()
+        if Path(env_path).exists():
+            with open(env_path, "r", encoding="utf-8") as f:
+                return f.read()
+        return ""  # Return empty string if file doesn't exist
+
+    def save_to_env(self, content: str, backup: bool = True) -> bool:
+        """Save content to .env file
+        
+        Args:
+            content: The content to save to the .env file
+            backup: Whether to create a backup of the existing file
+            
+        Returns:
+            True if the save was successful, False otherwise
+        """
+        env_path = self.get_env_file_path()
+        
+        try:
+            # Create backup if file exists and backup is enabled
+            if backup and Path(env_path).exists():
+                import datetime
+                timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                backup_path = f"{env_path}.backup_{timestamp}"
+                import shutil
+                shutil.copy2(env_path, backup_path)
+                logging.getLogger(__name__).info(f"Created backup of .env file at: {backup_path}")
+            
+            # Write new content to .env file
+            with open(env_path, "w", encoding="utf-8") as f:
+                f.write(content)
+            
+            logging.getLogger(__name__).info(f"Saved configuration to .env file: {env_path}")
+            return True
+        except Exception as e:
+            logging.getLogger(__name__).error(f"Failed to save configuration to .env file: {e}")
+            return False
+
+    def reload_config(self) -> "DorisConfig":
+        """Reload configuration from environment variables and .env file"""
+        logging.getLogger(__name__).info("Reloading configuration from environment variables and .env file")
+        return self.from_env()
 
 
 class ConfigManager:
