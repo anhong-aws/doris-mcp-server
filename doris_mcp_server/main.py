@@ -680,6 +680,10 @@ class DorisServer:
             from .auth.index_handlers import IndexHandlers
             index_handlers = IndexHandlers(self.config, basic_auth_handlers)
             
+            # DB handlers for connection pool management
+            from .auth.db_handlers import DBHandlers
+            db_handlers = DBHandlers(self.connection_manager, basic_auth_handlers)
+        
             async def index_page(request):
                 """Index page with login check"""
                 self.logger.info(f"index_page function called with request: {request}")
@@ -687,6 +691,34 @@ class DorisServer:
                 response = await index_handlers.handle_index_page(request)
                 self.logger.info(f"index_page returning response: {response}")
                 return response
+            
+            async def db_management_page(request):
+                """Connection pool management page"""
+                return await db_handlers.handle_db_management_page(request)
+            
+            async def db_status(request):
+                """Get connection pool status"""
+                return await db_handlers.handle_get_db_status(request)
+            
+            async def db_test(request):
+                """Test database connection"""
+                return await db_handlers.handle_test_connection(request)
+            
+            async def db_refresh(request):
+                """Refresh connection pool"""
+                return await db_handlers.handle_refresh_pool(request)
+            
+            async def db_close_all(request):
+                """Close all connections"""
+                return await db_handlers.handle_close_all_connections(request)
+            
+            async def db_recreate(request):
+                """Recreate connection pool"""
+                return await db_handlers.handle_recreate_pool(request)
+            
+            async def db_release_session(request):
+                """Release a specific session"""
+                return await db_handlers.handle_release_session(request)
             
             # Lifecycle manager - simplified since we manage session_manager externally
             @contextlib.asynccontextmanager
@@ -702,48 +734,56 @@ class DorisServer:
             
             # Create ASGI application - use direct session manager as ASGI app
             starlette_app = Starlette(
-                debug=True,
-                routes=[
-                    Route("/", index_page, methods=["GET"]),
-                    Route("/index", index_page, methods=["GET"]),
-                    Route("/index.html", index_page, methods=["GET"]),
-                    Route("/health", health_check, methods=["GET"]),
-                    # OAuth endpoints
-                    Route("/auth/login", oauth_login, methods=["GET"]),
-                    Route("/ui/login/page", login_page, methods=["GET"]),
-                    Route("/auth/callback", oauth_callback, methods=["GET"]),
-                    Route("/auth/provider", oauth_provider_info, methods=["GET"]),
-                    Route("/auth/demo", oauth_demo, methods=["GET"]),
-                    Route("/ui/logout", logout_page, methods=["GET", "POST"]),
-                    Route("/ui/session", session_status, methods=["GET"]),
-                    # API endpoints for basic authentication
-                    Route("/ui/login", basic_login, methods=["GET", "POST"]),
-                    # Token management endpoints
-                    Route("/token/create", token_create, methods=["GET", "POST"]),
-                    Route("/token/revoke", token_revoke, methods=["GET", "DELETE"]),
-                    Route("/token/list", token_list, methods=["GET"]),
-                    Route("/token/stats", token_stats, methods=["GET"]),
-                    Route("/token/cleanup", token_cleanup, methods=["GET", "POST"]),
-                    Route("/token/management", token_management, methods=["GET"]),
-                    # Cache management endpoints
-                    Route("/cache/details", cache_details, methods=["GET"]),
-                    Route("/cache/statistics", cache_statistics, methods=["GET"]),
-                    Route("/cache/entry", cache_entry_detail, methods=["GET"]),
-                    Route("/cache/management", cache_management, methods=["GET"]),
-                    Route("/cache/clear", cache_clear, methods=["GET", "POST"]),
-                    Route("/cache/search", cache_search_keys, methods=["GET"]),
-                    # MCP Log management endpoints
-                    Route("/logs/content", mcp_logs, methods=["GET"]),
-                    Route("/logs/stats", mcp_logs_stats, methods=["GET"]),
-                    Route("/logs/management", mcp_logs_management, methods=["GET"]),
-                    # Configuration management endpoints
-                    Route("/config/management", config_management, methods=["GET"]),
-                    Route("/config/details", config_details, methods=["GET"]),
-                    Route("/config/env-content", get_env_content, methods=["GET"]),
-                    Route("/config/save-env", save_env, methods=["POST"]),
-                ],
-                lifespan=lifespan,
-            )
+            debug=True,
+            routes=[
+                Route("/", index_page, methods=["GET"]),
+                Route("/index", index_page, methods=["GET"]),
+                Route("/index.html", index_page, methods=["GET"]),
+                Route("/health", health_check, methods=["GET"]),
+                # OAuth endpoints
+                Route("/auth/login", oauth_login, methods=["GET"]),
+                Route("/ui/login/page", login_page, methods=["GET"]),
+                Route("/auth/callback", oauth_callback, methods=["GET"]),
+                Route("/auth/provider", oauth_provider_info, methods=["GET"]),
+                Route("/auth/demo", oauth_demo, methods=["GET"]),
+                Route("/ui/logout", logout_page, methods=["GET", "POST"]),
+                Route("/ui/session", session_status, methods=["GET"]),
+                # API endpoints for basic authentication
+                Route("/ui/login", basic_login, methods=["GET", "POST"]),
+                # Token management endpoints
+                Route("/token/create", token_create, methods=["GET", "POST"]),
+                Route("/token/revoke", token_revoke, methods=["GET", "DELETE"]),
+                Route("/token/list", token_list, methods=["GET"]),
+                Route("/token/stats", token_stats, methods=["GET"]),
+                Route("/token/cleanup", token_cleanup, methods=["GET", "POST"]),
+                Route("/token/management", token_management, methods=["GET"]),
+                # Cache management endpoints
+                Route("/cache/details", cache_details, methods=["GET"]),
+                Route("/cache/statistics", cache_statistics, methods=["GET"]),
+                Route("/cache/entry", cache_entry_detail, methods=["GET"]),
+                Route("/cache/management", cache_management, methods=["GET"]),
+                Route("/cache/clear", cache_clear, methods=["GET", "POST"]),
+                Route("/cache/search", cache_search_keys, methods=["GET"]),
+                # MCP Log management endpoints
+                Route("/logs/content", mcp_logs, methods=["GET"]),
+                Route("/logs/stats", mcp_logs_stats, methods=["GET"]),
+                Route("/logs/management", mcp_logs_management, methods=["GET"]),
+                # Configuration management endpoints
+                Route("/config/management", config_management, methods=["GET"]),
+                Route("/config/details", config_details, methods=["GET"]),
+                Route("/config/env-content", get_env_content, methods=["GET"]),
+                Route("/config/save-env", save_env, methods=["POST"]),
+                # Connection pool management endpoints
+                Route("/db/management", db_management_page, methods=["GET"]),
+                Route("/db/status", db_status, methods=["GET"]),
+                Route("/db/test", db_test, methods=["GET", "POST"]),
+                Route("/db/refresh", db_refresh, methods=["POST"]),
+                Route("/db/close-all", db_close_all, methods=["POST"]),
+                Route("/db/recreate", db_recreate, methods=["POST"]),
+                Route("/db/session/{session_id}/release", db_release_session, methods=["POST"]),
+            ],
+            lifespan=lifespan,
+        )
             
             # Custom ASGI app that handles both /mcp and /mcp/ without redirects
             async def mcp_app(scope, receive, send):
@@ -772,6 +812,7 @@ class DorisServer:
                             path.startswith("/ui/") or
                             path.startswith("/token/") or
                             path.startswith("/cache/") or
+                            path.startswith("/db/") or
                             path.startswith("/logs/") or
                             path.startswith("/config/") or
                             path.startswith("/api/") or

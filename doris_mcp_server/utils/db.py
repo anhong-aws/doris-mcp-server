@@ -216,6 +216,10 @@ class DorisSessionCache:
         self.logger.debug(f"Use cached connection: {session_id}")
         return self.cached.get(session_id)
 
+    def get_all_sessions(self):
+        """Get all cached sessions"""
+        return self.cached.copy()
+
     def remove(self, session_id):
         if session_id in self.cached:
             del self.cached[session_id]

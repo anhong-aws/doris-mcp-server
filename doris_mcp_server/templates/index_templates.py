@@ -215,7 +215,8 @@ INDEX_PAGE_DISABLED_HTML = """
     
     <div class="nav-links">
         <a href="/token/management"><i class="fas fa-key"></i> Token </a>
-        <a href="/cache/management"><i class="fas fa-database"></i> Cache< /a>
+        <a href="/cache/management"><i class="fas fa-database"></i> Cache </a>
+        <a href="/db/management"><i class="fas fa-server"></i> Connection Pool </a>
         <a href="/logs/management"><i class="fas fa-file-alt"></i> Log </a>
         <a href="/config/management"><i class="fas fa-cog"></i> Config </a>
     </div>
@@ -455,6 +456,7 @@ INDEX_PAGE_ENABLED_HTML = """
     <div class="nav-links">
         <a href="/token/management"><i class="fas fa-key"></i> Token </a>
         <a href="/cache/management"><i class="fas fa-database"></i> Cache </a>
+        <a href="/db/management"><i class="fas fa-server"></i> Connection Pool </a>
         <a href="/logs/management"><i class="fas fa-file-alt"></i> MCP Log </a>
         <a href="/config/management"><i class="fas fa-cog"></i> Config </a>
         <a href="/ui/logout" class="logout-btn"><i class="fas fa-sign-out-alt"></i> Logout</a>
