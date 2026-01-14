@@ -591,9 +591,11 @@ DB_MANAGEMENT_PAGE_HTML = """
             alertDiv.className = `alert alert-${type}`;
             alertDiv.style.display = 'block';
             
+            // Show success alerts for 10 seconds, other alerts for 20 seconds
+            const timeout = type === 'success' ? 10000 : 20000;
             setTimeout(() => {
                 alertDiv.style.display = 'none';
-            }, 5000);
+            }, timeout);
         }
         
         // Show confirmation modal
