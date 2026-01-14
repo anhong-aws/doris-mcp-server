@@ -220,6 +220,11 @@ class PerformanceConfig:
     
     # Response content size limit (characters)
     max_response_content_size: int = 4096
+    
+    # Table and column filtering configuration
+    table_filter_include: str = ""
+    table_filter_exclude: str = ""
+    column_filter_exclude: str = ""
 
 
 @dataclass
@@ -528,6 +533,11 @@ class DorisConfig:
         config.performance.max_response_content_size = int(
             os.getenv("MAX_RESPONSE_CONTENT_SIZE", str(config.performance.max_response_content_size))
         )
+        
+        # Table and column filtering configuration
+        config.performance.table_filter_include = os.getenv("TABLE_FILTER_INCLUDE", config.performance.table_filter_include)
+        config.performance.table_filter_exclude = os.getenv("TABLE_FILTER_EXCLUDE", config.performance.table_filter_exclude)
+        config.performance.column_filter_exclude = os.getenv("COLUMN_FILTER_EXCLUDE", config.performance.column_filter_exclude)
 
         # Logging configuration
         config.logging.level = os.getenv("LOG_LEVEL", config.logging.level)

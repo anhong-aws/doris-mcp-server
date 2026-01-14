@@ -46,6 +46,7 @@ INTERNAL_CATALOG_NAME="internal"
 
 # Import local modules
 from .db import DorisConnectionManager
+from .filter_manager import FilterManager
 
 class MetadataExtractor:
     """Apache Doris Metadata Extractor"""
@@ -67,6 +68,14 @@ class MetadataExtractor:
         self.connection_manager = connection_manager
         
         self.cache_manager = cache_manager
+        
+        # Initialize filter manager
+        filter_config = {
+            'TABLE_FILTER_INCLUDE': os.getenv("TABLE_FILTER_INCLUDE", ""),
+            'TABLE_FILTER_EXCLUDE': os.getenv("TABLE_FILTER_EXCLUDE", ""),
+            'COLUMN_FILTER_EXCLUDE': os.getenv("COLUMN_FILTER_EXCLUDE", "")
+        }
+        self.filter_manager = FilterManager(filter_config)
         
         # Refresh time
         self.last_refresh_time = None
@@ -213,6 +222,9 @@ class MetadataExtractor:
                         'comment': row.get('Comment', '')
                     })
             
+            # Apply column filtering
+            schema = self.filter_manager.filter_columns(table_name, schema)
+            
             # Store result in cache
             self.cache_manager.set(cache_key, schema)
             logger.debug(f"Cached table schema for: {effective_db}.{table_name}")
@@ -268,14 +280,17 @@ class MetadataExtractor:
             if not result:
                 return []
             
-            # Extract table names
+            # Extract table names and apply filtering
             tables = []
             for row in result:
                 if isinstance(row, dict):
-                    tables.append({
-                        'table_name': row.get('TABLE_NAME', ''),
-                        'table_comment': row.get('TABLE_COMMENT', '')
-                    })
+                    table_name = row.get('TABLE_NAME', '')
+                    # Apply table filtering
+                    if self.filter_manager.is_table_allowed(table_name):
+                        tables.append({
+                            'table_name': table_name,
+                            'table_comment': row.get('TABLE_COMMENT', '')
+                        })
             
             # Store result in cache
             self.cache_manager.set(cache_key, tables)

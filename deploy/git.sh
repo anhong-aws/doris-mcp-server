@@ -1,3 +1,3 @@
 git add .
-git commit -m "bi 增加获取工件信息服务 20250112"
+git commit -m "bi 增加表明，列名过滤功能 20250114"
 git push origin master
