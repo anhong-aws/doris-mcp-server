@@ -453,10 +453,10 @@ INDEX_PAGE_ENABLED_HTML = """
     </div>
     
     <div class="nav-links">
-        <a href="/token/management"><i class="fas fa-key"></i> Token Management</a>
-        <a href="/cache/management"><i class="fas fa-database"></i> Cache Management</a>
-        <a href="/logs/management"><i class="fas fa-file-alt"></i> MCP Log Management</a>
-        <a href="/config/management"><i class="fas fa-cog"></i> Configuration Management</a>
+        <a href="/token/management"><i class="fas fa-key"></i> Token </a>
+        <a href="/cache/management"><i class="fas fa-database"></i> Cache </a>
+        <a href="/logs/management"><i class="fas fa-file-alt"></i> MCP Log </a>
+        <a href="/config/management"><i class="fas fa-cog"></i> Config </a>
         <a href="/ui/logout" class="logout-btn"><i class="fas fa-sign-out-alt"></i> Logout</a>
     </div>
     
@@ -484,6 +484,7 @@ INDEX_PAGE_ENABLED_HTML = """
             <div class="server-info">
                 <p><i class="fas fa-key"></i> <strong>Token Management:</strong> <a href="/token/management">Manage Tokens</a></p>
                 <p><i class="fas fa-database"></i> <strong>Cache Management:</strong> <a href="/cache/management">Manage Cache</a></p>
+                <p><i class="fas fa-cog"></i> <strong>Config Management:</strong> <a href="/config/management">Manage Config</a></p>
                 <p><i class="fas fa-file-alt"></i> <strong>MCP Log Management:</strong> <a href="/logs/management">View MCP Logs</a></p>
                 <p><i class="fas fa-terminal"></i> <strong>API Endpoints:</strong> /mcp (MCP Protocol)</p>
             </div>

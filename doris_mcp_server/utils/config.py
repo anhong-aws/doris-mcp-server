@@ -943,12 +943,56 @@ class DorisConfig:
         return ".env"
 
     def load_env_file_content(self) -> str:
-        """Load the content of the .env file"""
+        """Load the content of the .env file and mask sensitive information"""
         env_path = self.get_env_file_path()
         if Path(env_path).exists():
             with open(env_path, "r", encoding="utf-8") as f:
-                return f.read()
+                lines = f.readlines()
+                
+            masked_lines = []
+            for line in lines:
+                line = line.rstrip()
+                # Skip comment lines
+                if line.strip().startswith('#'):
+                    masked_lines.append(line)
+                    continue
+                
+                # Check if line contains 'password' (case-insensitive)
+                if 'password' in line.lower():
+                    # Split by '=' to get key and value
+                    parts = line.split('=', 1)
+                    if len(parts) == 2:
+                        key, value = parts
+                        # Mask the value with ***
+                        masked_lines.append(f"{key}=***")
+                    else:
+                        masked_lines.append(line)
+                else:
+                    masked_lines.append(line)
+            
+            return '\n'.join(masked_lines)
         return ""  # Return empty string if file doesn't exist
+
+    def get_original_password(self, key: str) -> str:
+        """Get the original password from environment variables or current config
+        
+        Args:
+            key: The key name (e.g., "DORIS_PASSWORD")
+            
+        Returns:
+            The original password string
+        """
+        # First try to get from environment variables
+        password = os.getenv(key)
+        if password:
+            return password
+        
+        # If not in environment variables, try to get from current configuration
+        if key == "DORIS_PASSWORD":
+            return self.database.password
+            
+        # Return empty string if not found
+        return ""
 
     def save_to_env(self, content: str, backup: bool = True) -> bool:
         """Save content to .env file
@@ -963,6 +1007,32 @@ class DorisConfig:
         env_path = self.get_env_file_path()
         
         try:
+            # Process the content to restore original passwords
+            lines = content.split('\n')
+            processed_lines = []
+            
+            for line in lines:
+                line = line.rstrip()
+                
+                # Check if line contains 'password' (case-insensitive) and has *** value
+                if 'password' in line.lower() and '=***' in line:
+                    # Split by '=' to get key and value
+                    parts = line.split('=', 1)
+                    if len(parts) == 2:
+                        key, value = parts
+                        # Remove any quotes from the key
+                        key = key.strip().strip('"').strip("'")
+                        # Get the original password
+                        original_password = self.get_original_password(key.upper())
+                        # Replace *** with the original password
+                        processed_lines.append(f"{key}={original_password}")
+                    else:
+                        processed_lines.append(line)
+                else:
+                    processed_lines.append(line)
+            
+            processed_content = '\n'.join(processed_lines)
+            
             # Create backup if file exists and backup is enabled
             if backup and Path(env_path).exists():
                 import datetime
@@ -974,7 +1044,7 @@ class DorisConfig:
             
             # Write new content to .env file
             with open(env_path, "w", encoding="utf-8") as f:
-                f.write(content)
+                f.write(processed_content)
             
             logging.getLogger(__name__).info(f"Saved configuration to .env file: {env_path}")
             return True
