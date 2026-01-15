@@ -357,6 +357,11 @@ DB_MANAGEMENT_PAGE_HTML = """
             background-color: #d4edda;
         }
         
+        .diagnosis-item.info {
+            border-left-color: #17a2b8;
+            background-color: #d1ecf1;
+        }
+        
         .update-time {
             font-size: 12px;
             color: #999;
@@ -550,6 +555,33 @@ DB_MANAGEMENT_PAGE_HTML = """
     </div>
     
     <div class="card">
+        <h2><i class="fas fa-database"></i> All Connections</h2>
+        <div class="table-container">
+            <table id="all-connections-table">
+                <thead>
+                      <tr>
+                          <th>Connection ID</th>
+                          <th>Status</th>
+                          <th>Session ID</th>
+                          <th>Created At</th>
+                          <th>Acquired At</th>
+                          <th>Last Release Time</th>
+                          <th>Current Duration (s)</th>
+                          <th>Total Duration (s)</th>
+                          <th>Release Count</th>
+                          <th>Query Count</th>
+                          <th>Is Healthy</th>
+                          <th>Last SQL</th>
+                      </tr>
+                  </thead>
+                <tbody id="all-connections-body">
+                    <tr><td colspan="12" style="text-align: center;">Loading connections...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+    
+    <div class="card">
         <h2><i class="fas fa-stethoscope"></i> Diagnosis</h2>
         <div id="diagnosis-container">
             <div class="diagnosis-item">Loading diagnosis...</div>
@@ -627,6 +659,59 @@ DB_MANAGEMENT_PAGE_HTML = """
             } catch (error) {
                 showAlert('Failed to fetch pool status: ' + error.message, 'error');
             }
+        }
+        
+        // Fetch all connections
+        async function fetchAllConnections() {
+            try {
+                const response = await fetch('/db/connections');
+                const data = await response.json();
+                
+                if (data.success) {
+                    updateAllConnections(data.data);
+                } else {
+                    showAlert(data.error, 'error');
+                }
+            } catch (error) {
+                showAlert('Failed to fetch connections: ' + error.message, 'error');
+            }
+        }
+        
+        // Update all connections table
+        function updateAllConnections(connections) {
+            const tbody = document.getElementById('all-connections-body');
+            
+            if (connections.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="11" style="text-align: center;">No connections found</td></tr>';
+                return;
+            }
+            
+            tbody.innerHTML = connections.map(conn => `
+                <tr>
+                    <td>${conn.connection_id}</td>
+                    <td>
+                        <span class="status-indicator ${conn.status === 'active' ? 'healthy' : conn.status === 'idle' ? 'warning' : 'unhealthy'}"></span>
+                        ${conn.status.charAt(0).toUpperCase() + conn.status.slice(1)}
+                    </td>
+                    <td>${conn.session_id || '-'}</td>
+                    <td>${conn.created_at ? new Date(conn.created_at).toLocaleString() : '-'}</td>
+                    <td>${conn.acquired_at ? new Date(conn.acquired_at).toLocaleString() : '-'}</td>
+                    <td>${conn.last_release_time ? new Date(conn.last_release_time).toLocaleString() : '-'}</td>
+                    <td>${conn.current_duration !== null ? conn.current_duration : '-'}</td>
+                    <td>${conn.total_duration ? conn.total_duration.toFixed(2) : '-'}</td>
+                    <td>${conn.release_count || 0}</td>
+                    <td>${conn.query_count || 0}</td>
+                    <td>
+                        <span class="status-indicator ${conn.is_healthy ? 'healthy' : 'unhealthy'}"></span>
+                        ${conn.is_healthy ? 'Yes' : 'No'}
+                    </td>
+                    <td>
+                        ${conn.last_sql ? 
+                            `<i class="fas fa-file-code" style="color: #0066cc; cursor: help; font-size: 16px;" data-sql="${conn.last_sql.replace(/"/g, '&quot;')}" onmouseenter="showSqlTooltip(event)" onmouseleave="hideSqlTooltip()"></i>` : 
+                            '<i class="fas fa-file-code" style="color: #999; cursor: help; font-size: 16px;" data-sql="None SQL" onmouseenter="showSqlTooltip(event)" onmouseleave="hideSqlTooltip()"></i>'}
+                    </td>
+                </tr>
+            `).join('');
         }
         
         // Update pool status
@@ -880,10 +965,59 @@ DB_MANAGEMENT_PAGE_HTML = """
         });
         
         // Initial load
-        fetchPoolStatus();
+        async function initialLoad() {
+            await fetchPoolStatus();
+            await fetchAllConnections();
+        }
+        
+        initialLoad();
+
+        // Custom tooltip functions for SQL display
+        function showSqlTooltip(event) {
+            const sql = event.target.getAttribute('data-sql');
+            if (!sql) return;
+
+            // Create tooltip element if it doesn't exist
+            let tooltip = document.getElementById('sql-tooltip');
+            if (!tooltip) {
+                tooltip = document.createElement('div');
+                tooltip.id = 'sql-tooltip';
+                tooltip.style.cssText = `
+                    position: absolute;
+                    background-color: #333;
+                    color: white;
+                    padding: 8px 12px;
+                    border-radius: 4px;
+                    font-size: 12px;
+                    white-space: pre-wrap;
+                    word-break: break-all;
+                    max-width: 500px;
+                    z-index: 10000;
+                    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+                    pointer-events: none;
+                `;
+                document.body.appendChild(tooltip);
+            }
+
+            // Set tooltip content and position
+            tooltip.textContent = sql;
+            tooltip.style.left = `${event.pageX + 10}px`;
+            tooltip.style.top = `${event.pageY + 10}px`;
+            tooltip.style.display = 'block';
+        }
+
+        function hideSqlTooltip() {
+            const tooltip = document.getElementById('sql-tooltip');
+            if (tooltip) {
+                tooltip.style.display = 'none';
+            }
+        }
         
         // Auto-refresh every 30 seconds
-        setInterval(fetchPoolStatus, 30000);
+        setInterval(async () => {
+            await fetchPoolStatus();
+            await fetchAllConnections();
+        }, 30000);
     </script>
 </body>
 </html>

@@ -720,6 +720,10 @@ class DorisServer:
                 """Release a specific session"""
                 return await db_handlers.handle_release_session(request)
             
+            async def db_connections(request):
+                """Get all connections (active and idle)"""
+                return await db_handlers.handle_get_all_connections(request)
+            
             # Lifecycle manager - simplified since we manage session_manager externally
             @contextlib.asynccontextmanager
             async def lifespan(app: Starlette) -> AsyncIterator[None]:
@@ -781,6 +785,7 @@ class DorisServer:
                 Route("/db/close-all", db_close_all, methods=["POST"]),
                 Route("/db/recreate", db_recreate, methods=["POST"]),
                 Route("/db/session/{session_id}/release", db_release_session, methods=["POST"]),
+                Route("/db/connections", db_connections, methods=["GET"]),
             ],
             lifespan=lifespan,
         )

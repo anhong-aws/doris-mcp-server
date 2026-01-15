@@ -26,7 +26,7 @@ import asyncio
 import logging
 import time
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, Optional
 
@@ -47,8 +47,13 @@ class ConnectionMetrics:
     idle_connections: int = 0
     failed_connections: int = 0
     connection_errors: int = 0
+    acquisition_timeouts: int = 0
+    query_timeouts: int = 0
+    validation_errors: int = 0
     avg_connection_time: float = 0.0
     last_health_check: datetime | None = None
+    last_error_time: datetime | None = None
+    error_log: list[dict] = field(default_factory=list)
 
 
 @dataclass
@@ -70,6 +75,7 @@ class DorisConnection:
         self.created_at = datetime.utcnow()
         self.last_used = datetime.utcnow()
         self.query_count = 0
+        self.last_sql = None
         self.is_healthy = True
         self.security_manager = security_manager
         self.logger = get_logger(__name__)
@@ -112,6 +118,8 @@ class DorisConnection:
                 execution_time = time.time() - start_time
                 self.last_used = datetime.utcnow()
                 self.query_count += 1
+                self.last_sql = sql
+
 
                 # Get column information
                 columns = []
@@ -284,6 +292,8 @@ class DorisConnectionManager:
         self.pool_recovering = False
         self.pool_health_check_task = None
         self.pool_cleanup_task = None
+        self._cleanup_in_progress = False  # Flag to prevent concurrent health checks and cleanup
+        self._health_check_in_progress = False  # Flag to prevent concurrent health checks
         
         # Metrics tracking
         self.metrics = ConnectionMetrics()
@@ -308,6 +318,16 @@ class DorisConnectionManager:
         # 🔧 FIX: Add missing monitoring parameters that were removed during refactoring
         self.health_check_interval = 30  # seconds
         self.pool_warmup_size = 3  # connections to maintain
+        
+        # 🔧 ADD: Track all connections (active and idle) with details
+        self._all_connections = {}  # connection_id -> connection_details
+        self._connection_counter = 0  # Counter for unique connection IDs (fallback)
+        self._connections_lock = asyncio.Lock()
+        
+        # 🔧 ADD: Connection cleanup mechanism
+        self.connection_cleanup_interval = 300  # 5 minutes
+        self.connection_cleanup_task = None
+        self.connection_cleanup_lock = asyncio.Lock()
     
     def _update_db_params_from_config(self, db_config: dict):
         """Update database connection parameters from config dictionary"""
@@ -499,6 +519,8 @@ class DorisConnectionManager:
                 self.pool_health_check_task = asyncio.create_task(self._pool_health_monitor())
             if not self.pool_cleanup_task or self.pool_cleanup_task.done():
                 self.pool_cleanup_task = asyncio.create_task(self._pool_cleanup_monitor())
+            if not self.connection_cleanup_task or self.connection_cleanup_task.done():
+                self.connection_cleanup_task = asyncio.create_task(self._start_connection_cleanup())
             
             # Perform initial pool warmup
             await self._warmup_pool()
@@ -849,16 +871,97 @@ class DorisConnectionManager:
             raise RuntimeError("Connection pool health check failed")
 
     async def _test_pool_health(self) -> bool:
-        """Test connection pool health"""
+        """Enhanced connection pool health test with timeout and multiple checks"""
+        self._health_check_in_progress = True
         try:
-            async with self.pool.acquire() as conn:
-                async with conn.cursor() as cursor:
-                    await cursor.execute("SELECT 1")
-                    result = await cursor.fetchone()
-                    return result and result[0] == 1
+            # Check 1: Pool exists and is not closed
+            if not self.pool or self.pool.closed:
+                self.logger.error("Pool health test failed: Pool not available or closed")
+                self.log_connection_error('pool_unavailable', 'Pool not available or closed')
+                return False
+
+            # Get pool statistics for debugging
+            pool_stats = {
+                'size': self.pool.size if hasattr(self.pool, 'size') else 'unknown',
+                'freesize': self.pool.freesize if hasattr(self.pool, 'freesize') else 'unknown',
+                'closed': self.pool.closed if hasattr(self.pool, 'closed') else 'unknown'
+            }
+            self.logger.debug(f"Pool health check starting with stats: {pool_stats}")
+
+            conn = None
+            # Check 2: Try to acquire a connection with timeout
+            try:
+                async with asyncio.timeout(8.0):  # Increased timeout from 5 to 8 seconds
+                    self.logger.debug("Attempting to acquire connection for health check...")
+                    conn = await self.pool.acquire()
+                    self.logger.debug("Successfully acquired connection for health check")
+            except asyncio.TimeoutError:
+                self.logger.error(f"Pool health test failed: Connection acquisition timeout. Pool stats: {pool_stats}")
+                self.log_connection_error('acquisition_timeout', f'Connection acquisition timeout during health check. Pool stats: {pool_stats}')
+                return False
+            except Exception as acquire_error:
+                self.logger.error(f"Pool health test failed: Connection acquisition error: {acquire_error}. Pool stats: {pool_stats}")
+                self.log_connection_error('connection_error', f'Connection acquisition error during health check: {acquire_error}. Pool stats: {pool_stats}')
+                return False
+
+            # If we got a connection, make sure to release it properly
+            try:
+                # Check connection state
+                conn_state = {
+                    'closed': conn.closed if hasattr(conn, 'closed') else 'unknown',
+                    'valid': not (hasattr(conn, 'closed') and conn.closed)
+                }
+                self.logger.debug(f"Connection state: {conn_state}")
+
+                # Check 3: Test connection with actual query
+                try:
+                    async with asyncio.timeout(5.0):  # Increased timeout from 3 to 5 seconds
+                        async with conn.cursor() as cursor:
+                            self.logger.debug("Executing health check query: SELECT 1")
+                            await cursor.execute("SELECT 1")
+                            self.logger.debug("Successfully executed health check query")
+                            result = await cursor.fetchone()
+                            self.logger.debug(f"Health check query result: {result}")
+                            
+                            if not result or result[0] != 1:
+                                self.logger.error(f"Pool health test failed: Unexpected query result: {result}")
+                                self.log_connection_error('validation_error', f'Unexpected query result during health check: {result}')
+                                return False
+                except asyncio.TimeoutError:
+                    self.logger.error("Pool health test failed: Query execution timeout")
+                    self.log_connection_error('query_timeout', 'Query execution timeout during health check')
+                    return False
+                except Exception as query_error:
+                    self.logger.error(f"Pool health test failed: Query execution error: {query_error}")
+                    self.log_connection_error('query_error', f'Query execution error during health check: {query_error}')
+                    return False
+
+                # Check 4: Verify connection properties
+                if hasattr(conn, 'closed') and conn.closed:
+                    self.logger.error("Pool health test failed: Connection is closed")
+                    self.log_connection_error('validation_error', 'Connection is closed during health check')
+                    return False
+
+                # All checks passed
+                self.logger.debug("✅ All health check tests passed")
+                return True
+                
+            finally:
+                # Always release the connection back to the pool
+                if conn:
+                    try:
+                        self.pool.release(conn)
+                        self.logger.debug("Successfully released connection back to pool")
+                    except Exception as release_error:
+                        self.logger.error(f"Error releasing connection during health test: {release_error}")
+                        self.log_connection_error('connection_error', f'Error releasing connection during health check: {release_error}')
+
         except Exception as e:
-            self.logger.error(f"Pool health test failed: {e}")
+            self.logger.error(f"Pool health test failed with unexpected error: {e}")
+            self.log_connection_error('unknown_error', f'Unknown error during health check: {e}')
             return False
+        finally:
+            self._health_check_in_progress = False
 
     async def _warmup_pool(self):
         """Warm up connection pool by creating initial connections"""
@@ -869,28 +972,48 @@ class DorisConnectionManager:
             # Acquire connections to force pool to create them
             for i in range(self.pool_warmup_size):
                 try:
-                    conn = await self.pool.acquire()
+                    self.logger.debug(f"Attempting to warm up connection {i+1}/{self.pool_warmup_size}")
+                    conn = await asyncio.wait_for(self.pool.acquire(), timeout=10.0)
                     warmup_connections.append(conn)
-                    self.logger.debug(f"Warmed up connection {i+1}/{self.pool_warmup_size}")
+                    self.logger.debug(f"Successfully warmed up connection {i+1}/{self.pool_warmup_size}")
+                except asyncio.TimeoutError:
+                    self.logger.warning(f"Timeout warming up connection {i+1}: Connection acquisition timed out")
+                    break
                 except Exception as e:
                     self.logger.warning(f"Failed to warm up connection {i+1}: {e}")
                     break
             
-            # Release all warmup connections back to pool
-            for conn in warmup_connections:
-                try:
-                    self.pool.release(conn)
-                except Exception as e:
-                    self.logger.warning(f"Failed to release warmup connection: {e}")
+            self.logger.debug(f"Successfully acquired {len(warmup_connections)} warmup connections")
             
-            self.logger.info(f"✅ Pool warmup completed, {len(warmup_connections)} connections created")
+            # Release all warmup connections back to pool
+            released_count = 0
+            for i, conn in enumerate(warmup_connections):
+                try:
+                    # Check connection state before release
+                    if conn and not conn.closed:
+                        self.pool.release(conn)
+                        released_count += 1
+                        self.logger.debug(f"Successfully released warmup connection {i+1}")
+                    else:
+                        self.logger.warning(f"Skipping release of connection {i+1} - already closed")
+                except Exception as e:
+                    self.logger.warning(f"Failed to release warmup connection {i+1}: {e}")
+                    try:
+                        if conn and hasattr(conn, 'ensure_closed'):
+                            await conn.ensure_closed()
+                    except Exception:
+                        pass
+            
+            self.logger.info(f"✅ Pool warmup completed: {len(warmup_connections)} connections created, {released_count} released back to pool")
 
         except Exception as e:
             self.logger.error(f"Pool warmup failed: {e}")
             # Clean up any remaining connections
-            for conn in warmup_connections:
+            for i, conn in enumerate(warmup_connections):
                 try:
-                    await conn.ensure_closed()
+                    if conn and hasattr(conn, 'ensure_closed'):
+                        await conn.ensure_closed()
+                        self.logger.debug(f"Cleaned up warmup connection {i+1} during error handling")
                 except Exception:
                     pass
 
@@ -901,6 +1024,13 @@ class DorisConnectionManager:
         while True:
             try:
                 await asyncio.sleep(self.health_check_interval)
+                # Skip health check if cleanup or another health check is in progress
+                if hasattr(self, '_cleanup_in_progress') and self._cleanup_in_progress:
+                    self.logger.debug("Cleanup in progress, skipping health check")
+                    continue
+                if hasattr(self, '_health_check_in_progress') and self._health_check_in_progress:
+                    self.logger.debug("Another health check in progress, skipping")
+                    continue
                 await self._check_pool_health()
             except asyncio.CancelledError:
                 self.logger.info("Pool health monitor stopped")
@@ -946,47 +1076,89 @@ class DorisConnectionManager:
 
     async def _cleanup_stale_connections(self):
         """Proactively clean up potentially stale connections"""
+        # Skip cleanup if recovery is in progress
+        if self.pool_recovering:
+            self.logger.debug("Recovery in progress, skipping stale connection cleanup")
+            return
+            
+        # Skip cleanup if health check is in progress
+        if hasattr(self, '_health_check_in_progress') and self._health_check_in_progress:
+            self.logger.debug("Health check in progress, skipping stale connection cleanup")
+            return
+            
+        # Set cleanup flag to prevent concurrent health checks
+        self._cleanup_in_progress = True
         try:
             self.logger.debug("🧹 Checking for stale connections")
             
+            # Skip cleanup if no pool or pool is closed
+            if not self.pool or self.pool.closed:
+                self.logger.debug("No active pool, skipping stale connection cleanup")
+                return
+            
             # Get pool statistics
-            pool_size = self.pool.size
-            pool_free = self.pool.freesize
+            pool_size = getattr(self.pool, 'size', 0)
+            pool_free = getattr(self.pool, 'freesize', 0)
+            
+            self.logger.debug(f"Pool stats before cleanup: size={pool_size}, freesize={pool_free}")
             
             # If pool has idle connections, test some of them
             if pool_free > 0:
                 test_count = min(pool_free, 2)  # Test up to 2 idle connections
+                conn = None
                 
                 for i in range(test_count):
                     try:
                         # Acquire connection, test it, and release
-                        conn = await asyncio.wait_for(self.pool.acquire(), timeout=5)
+                        self.logger.debug(f"Testing stale connection {i+1}/{test_count}")
+                        conn = await asyncio.wait_for(self.pool.acquire(), timeout=8)
                         
                         # Quick test
                         async with conn.cursor() as cursor:
-                            await asyncio.wait_for(cursor.execute("SELECT 1"), timeout=3)
+                            await asyncio.wait_for(cursor.execute("SELECT 1"), timeout=5)
                             await cursor.fetchone()
                         
                         # Connection is healthy, release it
                         self.pool.release(conn)
+                        self.logger.debug(f"Stale connection test {i+1} passed, connection released back to pool")
+                        conn = None  # Reset connection reference after release
                         
                     except asyncio.TimeoutError:
                         self.logger.debug(f"Stale connection test {i+1} timed out")
                         try:
-                            await conn.ensure_closed()
-                        except Exception:
-                            pass
+                            if conn and hasattr(conn, 'ensure_closed'):
+                                await conn.ensure_closed()
+                                self.logger.debug(f"Timed out connection {i+1} closed")
+                        except Exception as close_error:
+                            self.logger.debug(f"Error closing timed out connection: {close_error}")
                     except Exception as e:
                         self.logger.debug(f"Stale connection test {i+1} failed: {e}")
                         try:
-                            await conn.ensure_closed()
-                        except Exception:
-                            pass
+                            if conn and hasattr(conn, 'ensure_closed'):
+                                await conn.ensure_closed()
+                                self.logger.debug(f"Failed connection {i+1} closed")
+                        except Exception as close_error:
+                            self.logger.debug(f"Error closing failed connection: {close_error}")
+                    finally:
+                        # Ensure connection is either released or closed
+                        if conn and hasattr(conn, 'closed') and not conn.closed:
+                            try:
+                                self.pool.release(conn)
+                                self.logger.debug(f"Fallback: Released connection {i+1} in finally block")
+                            except Exception:
+                                try:
+                                    await conn.ensure_closed()
+                                    self.logger.debug(f"Fallback: Closed connection {i+1} in finally block")
+                                except Exception:
+                                    pass
                 
                 self.logger.debug(f"Stale connection cleanup completed, tested {test_count} connections")
                 
         except Exception as e:
             self.logger.error(f"Stale connection cleanup error: {e}")
+        finally:
+            # Clear cleanup flag
+            self._cleanup_in_progress = False
 
     async def _recover_pool(self):
         """Recover connection pool when health check fails"""
@@ -1095,6 +1267,13 @@ class DorisConnectionManager:
         Uses only semaphore to prevent too many concurrent acquisitions.
         If the connection is successfully obtained, it will be added to the connection pool cache.
         """
+        # # 🔧 TEST: Add mock error log for testing diagnosis UI
+        # self.log_connection_error(
+        #     'test_error',
+        #     f"Mock connection error for session {session_id} (test only)",
+        #     Exception("This is a test exception")
+        # )
+        
         cached_conn = self.session_cache.get(session_id)
         if cached_conn:
             return cached_conn
@@ -1147,30 +1326,108 @@ class DorisConnectionManager:
                 try:
                     raw_conn = await asyncio.wait_for(self.pool.acquire(), timeout=10.0)
                 except asyncio.TimeoutError:
-                    self.logger.error(f"Connection acquisition timed out for session {session_id}")
+                    self.log_connection_error(
+                        'acquisition_timeout',
+                        f"Connection acquisition timed out for session {session_id}"
+                    )
                     # Try one recovery attempt
                     await self._recover_pool_with_lock()
                     if self.pool and not self.pool.closed:
                         try:
                             raw_conn = await asyncio.wait_for(self.pool.acquire(), timeout=5.0)
                         except asyncio.TimeoutError:
+                            self.log_connection_error(
+                                'acquisition_timeout',
+                                "Connection acquisition timed out after recovery"
+                            )
                             raise RuntimeError("Connection acquisition timed out after recovery")
                     else:
+                        self.log_connection_error(
+                            'acquisition_timeout',
+                            "Connection acquisition timed out"
+                        )
                         raise RuntimeError("Connection acquisition timed out")
+                
+                # Use connection's own thread_id as unique identifier if available
+                # This prevents _all_connections from growing indefinitely
+                connection_id = None
+                if hasattr(raw_conn, 'connection_id'):
+                    connection_id = f"conn_{raw_conn.connection_id}"
+                elif hasattr(raw_conn, 'thread_id'):
+                    try:
+                        # aiomysql.Connection has a thread_id() method, not attribute
+                        thread_id = raw_conn.thread_id()
+                        connection_id = f"conn_{thread_id}"
+                    except Exception:
+                        # Fallback if thread_id() method fails
+                        pass
+                elif hasattr(raw_conn, 'server_thread_id'):
+                    # Direct access to server_thread_id tuple if thread_id() method fails
+                    try:
+                        connection_id = f"conn_{raw_conn.server_thread_id[0]}"
+                    except Exception:
+                        pass
+                
+                if not connection_id:
+                    # Fallback to counter if no unique identifier available
+                    connection_id = f"conn_{self._connection_counter}"
+                    self._connection_counter += 1
                 
                 # Wrap in DorisConnection
                 doris_conn = DorisConnection(raw_conn, session_id, self.security_manager)
+                doris_conn.connection_id = connection_id  # Add connection_id to DorisConnection
+                
+                # Add to all connections tracking
+                async with self._connections_lock:
+                    # Check if connection already exists (same connection_id)
+                    if connection_id in self._all_connections:
+                        # Update existing connection information
+                        conn_info = self._all_connections[connection_id]
+                        # Add previous duration if it was active
+                        if conn_info.get('status') == 'active' and conn_info.get('acquired_at'):
+                            duration = datetime.utcnow() - conn_info['acquired_at']
+                            conn_info['total_duration'] += duration.total_seconds()
+                        # Update connection details
+                        conn_info.update({
+                            'session_id': session_id,
+                            'acquired_at': datetime.utcnow(),
+                            'last_activity': datetime.utcnow(),
+                            'connection_object': raw_conn,
+                            'doris_connection': doris_conn,
+                            'status': 'active',
+                        })
+                    else:
+                        # Create new connection details
+                        conn_details = {
+                            'connection_id': connection_id,
+                            'session_id': session_id,
+                            'acquired_at': datetime.utcnow(),
+                            'last_activity': datetime.utcnow(),
+                            'connection_object': raw_conn,
+                            'doris_connection': doris_conn,
+                            'status': 'active',
+                            'release_count': 0,
+                            'total_duration': 0.0,
+                            'last_release_time': None
+                        }
+                        self._all_connections[connection_id] = conn_details
                 
                 # Basic validation - check if connection is open
                 if raw_conn.closed:
                     # Return connection and raise error
                     try:
                         self.pool.release(raw_conn)
+                        # Update connection status to idle
+                        async with self._connections_lock:
+                            if connection_id in self._all_connections:
+                                self._all_connections[connection_id]['status'] = 'idle'
+                                self._all_connections[connection_id]['last_release_time'] = datetime.utcnow()
+                                self._all_connections[connection_id]['session_id'] = None
                     except Exception:
                         pass
                     raise RuntimeError("Acquired connection is already closed")
                 
-                self.logger.debug(f"✅ Acquired fresh connection for session {session_id}")
+                self.logger.debug(f"✅ Acquired fresh connection {connection_id} for session {session_id}")
 
                 self.session_cache.save(doris_conn)
                 return doris_conn
@@ -1210,10 +1467,36 @@ class DorisConnectionManager:
             # 🔧 FIX: Simplified release operation without thread wrapper
             try:
                 self.pool.release(connection.connection)
-                self.logger.debug(f"✅ Released connection for session {session_id}")
+                
+                # Update connection status in tracking
+                if hasattr(connection, 'connection_id') and connection.connection_id:
+                    async with self._connections_lock:
+                        if connection.connection_id in self._all_connections:
+                            conn_info = self._all_connections[connection.connection_id]
+                            # Calculate connection duration
+                            if conn_info.get('acquired_at'):
+                                duration = datetime.utcnow() - conn_info['acquired_at']
+                                conn_info['total_duration'] += duration.total_seconds()
+                            # Update connection status
+                            conn_info['status'] = 'idle'
+                            conn_info['last_release_time'] = datetime.utcnow()
+                            conn_info['release_count'] += 1
+                            conn_info['session_id'] = None  # Clear session ID when released
+                            conn_info['last_activity'] = datetime.utcnow()
+                            
+                    self.logger.debug(f"✅ Released connection {connection.connection_id} for session {session_id}")
+                else:
+                    self.logger.debug(f"✅ Released connection for session {session_id}")
             except Exception as release_error:
                 self.logger.warning(f"Connection release failed for session {session_id}: {release_error}, force closing")
                 await connection.connection.ensure_closed()
+                # Update connection status to closed if release fails
+                if hasattr(connection, 'connection_id') and connection.connection_id:
+                    async with self._connections_lock:
+                        if connection.connection_id in self._all_connections:
+                            self._all_connections[connection.connection_id]['status'] = 'closed'
+                            self._all_connections[connection.connection_id]['last_release_time'] = datetime.utcnow()
+                            self._all_connections[connection.connection_id]['session_id'] = None
 
         except Exception as e:
             self.logger.error(f"Error releasing connection for session {session_id}: {e}")
@@ -1223,6 +1506,54 @@ class DorisConnectionManager:
             except Exception as close_error:
                 self.logger.debug(f"Error force closing connection: {close_error}")
 
+    async def _cleanup_inactive_connections(self):
+        """Clean up inactive connections that haven't been used for a long time"""
+        try:
+            self.logger.debug("Starting connection cleanup...")
+            now = datetime.utcnow()
+            connections_to_remove = []
+            
+            async with self._connections_lock:
+                for conn_id, conn_info in self._all_connections.items():
+                    # Remove connections that are closed or inactive for a long time
+                    if conn_info.get('status') == 'closed':
+                        connections_to_remove.append(conn_id)
+                    elif conn_info.get('last_release_time'):
+                        # Remove idle connections that haven't been used in the last hour
+                        last_release = datetime.fromisoformat(conn_info['last_release_time'])
+                        if (now - last_release).total_seconds() > 3600:  # 1 hour
+                            connections_to_remove.append(conn_id)
+                    elif conn_info.get('last_activity'):
+                        # Remove connections with no release time but inactive for a long time
+                        last_activity = datetime.fromisoformat(conn_info['last_activity'])
+                        if (now - last_activity).total_seconds() > 3600:  # 1 hour
+                            connections_to_remove.append(conn_id)
+                    
+                    # Remove connections that have exceeded maxsize + buffer
+                    if len(self._all_connections) > self.maxsize * 2:
+                        connections_to_remove.append(conn_id)
+                
+                # Remove identified connections
+                for conn_id in connections_to_remove:
+                    if conn_id in self._all_connections:
+                        del self._all_connections[conn_id]
+                
+            if connections_to_remove:
+                self.logger.debug(f"Cleaned up {len(connections_to_remove)} inactive connections")
+        except Exception as e:
+            self.logger.error(f"Error cleaning up inactive connections: {e}")
+    
+    async def _start_connection_cleanup(self):
+        """Start the connection cleanup task"""
+        try:
+            while True:
+                await asyncio.sleep(self.connection_cleanup_interval)
+                await self._cleanup_inactive_connections()
+        except asyncio.CancelledError:
+            self.logger.info("Connection cleanup task cancelled")
+        except Exception as e:
+            self.logger.error(f"Connection cleanup task error: {e}")
+    
     async def close(self):
         """Close connection manager"""
         try:
@@ -1238,6 +1569,14 @@ class DorisConnectionManager:
                 self.pool_cleanup_task.cancel()
                 try:
                     await self.pool_cleanup_task
+                except asyncio.CancelledError:
+                    pass
+            
+            # Cancel connection cleanup task
+            if self.connection_cleanup_task:
+                self.connection_cleanup_task.cancel()
+                try:
+                    await self.connection_cleanup_task
                 except asyncio.CancelledError:
                     pass
 
@@ -1311,7 +1650,11 @@ class DorisConnectionManager:
             return result
 
         except Exception as e:
-            self.logger.error(f"Query execution failed for session {session_id}: {e}")
+            self.log_connection_error(
+                'query_error',
+                f"Query execution failed for session {session_id}: {e}",
+                e
+            )
             raise
         finally:
             # Always release connection back to pool
@@ -1329,13 +1672,86 @@ class DorisConnectionManager:
             if connection:
                 await self.release_connection(session_id, connection)
 
+    async def get_all_connections(self) -> list[dict[str, Any]]:
+        """Get all connections (active and idle) with details"""
+        try:
+            all_connections = []
+            async with self._connections_lock:
+                for conn_info in self._all_connections.values():
+                    safe_conn_info = {k: v for k, v in conn_info.items() if k not in ['connection_object', 'doris_connection']}
+                    # Add additional info from DorisConnection
+                    if 'doris_connection' in conn_info and conn_info['doris_connection']:
+                        doris_conn = conn_info['doris_connection']
+                        safe_conn_info['created_at'] = doris_conn.created_at.isoformat() if doris_conn.created_at else None
+                        safe_conn_info['last_used'] = doris_conn.last_used.isoformat() if doris_conn.last_used else None
+                        safe_conn_info['query_count'] = doris_conn.query_count
+                        safe_conn_info['is_healthy'] = doris_conn.is_healthy
+                        safe_conn_info['last_sql'] = doris_conn.last_sql
+                    
+                    # Convert datetime objects to strings
+                    for key, value in safe_conn_info.items():
+                        if isinstance(value, datetime):
+                            safe_conn_info[key] = value.isoformat()
+                    
+                    # Calculate current duration if connection is active
+                    if safe_conn_info.get('status') == 'active' and safe_conn_info.get('acquired_at'):
+                        acquired_at = datetime.fromisoformat(safe_conn_info['acquired_at'])
+                        duration = datetime.utcnow() - acquired_at
+                        safe_conn_info['current_duration'] = round(duration.total_seconds(), 2)
+                    else:
+                        safe_conn_info['current_duration'] = None
+                    
+                    all_connections.append(safe_conn_info)
+            return all_connections
+        except Exception as e:
+            self.logger.error(f"Error getting all connections: {e}")
+            return []
+            
+    def log_connection_error(self, error_type: str, error_message: str, error: Exception = None):
+        """Log connection-related error and update metrics"""
+        # Update error counters based on error type
+        if error_type == 'acquisition_timeout':
+            self.metrics.acquisition_timeouts += 1
+        elif error_type == 'query_timeout':
+            self.metrics.query_timeouts += 1
+        elif error_type == 'validation_error':
+            self.metrics.validation_errors += 1
+        else:
+            self.metrics.connection_errors += 1
+            self.metrics.failed_connections += 1
+            
+        # Update last error time
+        self.metrics.last_error_time = datetime.utcnow()
+        
+        # Create error log entry
+        error_entry = {
+            "timestamp": self.metrics.last_error_time.isoformat(),
+            "type": error_type,
+            "message": error_message,
+            "exception": str(error) if error else None
+        }
+        
+        # Add to error log (keep last 100 errors)
+        self.metrics.error_log.append(error_entry)
+        if len(self.metrics.error_log) > 100:
+            self.metrics.error_log.pop(0)
+        
+        # Log to system logger
+        self.logger.error(f"Connection error ({error_type}): {error_message}", exc_info=error)
+    
     async def diagnose_connection_health(self) -> Dict[str, Any]:
-        """Diagnose connection pool health - Simplified Strategy"""
+        """Enhanced connection pool health diagnosis with error analysis"""
         diagnosis = {
             "timestamp": datetime.utcnow().isoformat(),
             "pool_status": "unknown",
             "pool_info": {},
-            "recommendations": []
+            "recommendations": [],
+            "error_analysis": {
+                "error_count": 0,
+                "last_error_time": None,
+                "error_types": {},
+                "recent_errors": []
+            }
         }
         
         try:
@@ -1350,7 +1766,7 @@ class DorisConnectionManager:
                 diagnosis["recommendations"].append("Recreate connection pool")
                 return diagnosis
             
-            diagnosis["pool_status"] = "healthy"
+            # Get pool information
             diagnosis["pool_info"] = {
                 "size": self.pool.size,
                 "free_size": self.pool.freesize,
@@ -1358,9 +1774,19 @@ class DorisConnectionManager:
                 "max_size": self.pool.maxsize
             }
             
+            # Calculate pool utilization
+            utilization = 0
+            if self.pool.size > 0:
+                utilization = 100 - (self.pool.freesize / self.pool.size * 100)
+                diagnosis["pool_info"]["utilization"] = round(utilization, 2)
+            
             # Generate recommendations based on pool status
             if self.pool.freesize == 0 and self.pool.size >= self.pool.maxsize:
                 diagnosis["recommendations"].append("Connection pool exhausted - consider increasing max_connections")
+            elif utilization > 90:
+                diagnosis["recommendations"].append(f"High pool utilization ({utilization:.1f}%) - consider optimizing queries or increasing max_connections")
+            elif utilization > 75:
+                diagnosis["recommendations"].append(f"Moderate pool utilization ({utilization:.1f}%) - monitor closely")
             
             # Test pool health
             if await self._test_pool_health():
@@ -1369,11 +1795,54 @@ class DorisConnectionManager:
                 diagnosis["pool_health"] = "unhealthy"
                 diagnosis["recommendations"].append("Pool health check failed - may need recovery")
             
+            # Analyze error history
+            if self.metrics.error_log:
+                # Count errors by type
+                error_types = {}
+                for error in self.metrics.error_log:
+                    error_type = error["type"]
+                    error_types[error_type] = error_types.get(error_type, 0) + 1
+                
+                # Get recent errors (last 5)
+                recent_errors = sorted(self.metrics.error_log, 
+                                      key=lambda x: x["timestamp"], 
+                                      reverse=True)[:5]
+                
+                # Update diagnosis with error analysis
+                diagnosis["error_analysis"] = {
+                    "error_count": len(self.metrics.error_log),
+                    "last_error_time": self.metrics.last_error_time.isoformat() if self.metrics.last_error_time else None,
+                    "error_types": error_types,
+                    "recent_errors": recent_errors
+                }
+                
+                # Add recommendations based on error types
+                if error_types.get("acquisition_timeout"):
+                    diagnosis["recommendations"].append("Connection acquisition timeouts detected - check database server load or increase connection timeout")
+                
+                if error_types.get("query_timeout"):
+                    diagnosis["recommendations"].append("Query timeouts detected - optimize slow queries or increase query timeout")
+                
+                if error_types.get("validation_error"):
+                    diagnosis["recommendations"].append("Connection validation errors detected - check database connectivity")
+                
+                if error_types.get("connection_error") > 3:
+                    diagnosis["recommendations"].append("Multiple connection errors detected - check database server status and network connectivity")
+            
+            # Update overall status based on health check and errors
+            if diagnosis["pool_health"] == "healthy" and not self.metrics.error_log:
+                diagnosis["pool_status"] = "healthy"
+            elif diagnosis["pool_health"] == "healthy" and self.metrics.error_log:
+                diagnosis["pool_status"] = "warning"
+            else:
+                diagnosis["pool_status"] = "unhealthy"
+            
             return diagnosis
             
         except Exception as e:
             diagnosis["error"] = str(e)
             diagnosis["recommendations"].append("Manual intervention required")
+            diagnosis["pool_status"] = "unhealthy"
             return diagnosis
 
 

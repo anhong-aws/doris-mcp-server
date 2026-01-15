@@ -118,15 +118,25 @@ class DBHandlers:
             if not session_id:
                 return JSONResponse({"success": False, "error": "Session ID is required"})
             
-            # Release session from cache
-            cached_conn = self.connection_manager.session_cache.get(session_id)
-            if cached_conn:
-                await self.connection_manager.release_connection(session_id, cached_conn)
+            # Get session connection
+            session_conn = self.connection_manager.session_cache.get(session_id)
+            if session_conn:
+                await self.connection_manager.release_connection(session_id, session_conn)
                 return JSONResponse({"success": True, "message": f"Session {session_id} released successfully"})
             else:
                 return JSONResponse({"success": False, "error": f"Session {session_id} not found"})
         except Exception as e:
             logger.error(f"Failed to release session: {e}")
+            return JSONResponse({"success": False, "error": str(e)})
+    
+    async def handle_get_all_connections(self, request: Request) -> JSONResponse:
+        """Handle get all connections request"""
+        try:
+            # Get all connections
+            connections = await self.connection_manager.get_all_connections()
+            return JSONResponse({"success": True, "data": connections})
+        except Exception as e:
+            logger.error(f"Failed to get all connections: {e}")
             return JSONResponse({"success": False, "error": str(e)})
     
     async def _get_db_status(self) -> dict:
@@ -167,6 +177,17 @@ class DBHandlers:
                     "recommendation": "Recreate the connection pool"
                 })
             
+            # Add detailed pool status
+            if self.connection_manager.pool:
+                pool_size = self.connection_manager.pool.size
+                free_size = self.connection_manager.pool.freesize
+                utilization = 100 - (free_size / pool_size * 100) if pool_size > 0 else 0
+                diagnosis_list.append({
+                    "title": "Pool Status",
+                    "description": f"Size: {pool_size}, Free: {free_size}, Utilization: {utilization:.1f}%",
+                    "type": "info"
+                })
+            
             # Add recommendations from diagnosis
             if diagnosis.get("recommendations"):
                 for rec in diagnosis["recommendations"]:
@@ -177,25 +198,37 @@ class DBHandlers:
                         "recommendation": rec
                     })
             
-            # Add utilization warning
-            if self.connection_manager.pool:
-                pool_size = self.connection_manager.pool.size
-                free_size = self.connection_manager.pool.freesize
-                utilization = 100 - (free_size / pool_size * 100) if pool_size > 0 else 0
-                if utilization > 90:
+            # Add error analysis if available
+            error_analysis = diagnosis.get("error_analysis", {})
+            if error_analysis.get("error_count", 0) > 0:
+                error_count = error_analysis["error_count"]
+                last_error_time = error_analysis.get("last_error_time")
+                
+                diagnosis_list.append({
+                    "title": "Error Summary",
+                    "description": f"Total errors: {error_count}. Last error: {last_error_time if last_error_time else 'Unknown'}",
+                    "type": "error"
+                })
+                
+                # Add error types
+                error_types = error_analysis.get("error_types", {})
+                if error_types:
+                    error_type_desc = "; ".join([f"{t}: {c}" for t, c in error_types.items()])
                     diagnosis_list.append({
-                        "title": "High Pool Utilization",
-                        "description": f"Connection pool utilization is {utilization:.1f}%",
-                        "type": "warning",
-                        "recommendation": "Consider increasing max_connections or optimizing queries"
+                        "title": "Error Types",
+                        "description": error_type_desc,
+                        "type": "warning"
                     })
-                elif free_size == 0:
-                    diagnosis_list.append({
-                        "title": "No Free Connections",
-                        "description": "All connections are in use",
-                        "type": "warning",
-                        "recommendation": "Check for long-running queries or increase max_connections"
-                    })
+                
+                # Add recent errors
+                recent_errors = error_analysis.get("recent_errors", [])
+                if recent_errors:
+                    for error in recent_errors[:3]:  # Show max 3 recent errors
+                        diagnosis_list.append({
+                            "title": f"Recent Error ({error['type']})",
+                            "description": f"{error['message']}\nTimestamp: {error['timestamp']}",
+                            "type": "error"
+                        })
             
             # Build session list
             session_list = []
@@ -218,8 +251,8 @@ class DBHandlers:
                 "failed_connections": metrics.failed_connections,
                 "connection_errors": metrics.connection_errors,
                 "avg_connection_time": metrics.avg_connection_time * 1000,  # Convert to ms
-                "acquisition_timeouts": metrics.failed_connections,  # Use failed connections as proxy
-                "query_timeouts": 0,  # Not currently tracked
+                "acquisition_timeouts": metrics.acquisition_timeouts,  # Use actual acquisition timeouts
+                "query_timeouts": metrics.query_timeouts,  # Use actual query timeouts
                 "sessions": session_list,
                 "diagnosis": diagnosis_list
             }
