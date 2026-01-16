@@ -349,142 +349,6 @@ class DorisConnectionManager:
         return (not self._is_config_empty(self.original_db_config['host']) and
                 not self._is_config_empty(self.original_db_config['user']))
     
-    def _find_available_token_with_db_config(self) -> str:
-        """Find the first available token with database configuration
-        
-        Returns:
-            Raw token string if found, empty string if not found
-        """
-        if not self.token_manager:
-            return ""
-            
-        try:
-            for token_hash, token_info in self.token_manager._tokens.items():
-                if (token_info.database_config and 
-                    token_info.is_active and
-                    not self._is_config_empty(token_info.database_config.host) and
-                    not self._is_config_empty(token_info.database_config.user)):
-                    
-                    # We need to find the raw token from the hash
-                    # This is a bit tricky since we only store hashes
-                    # We'll need to use the admin token from tokens.json if it has db config
-                    if token_info.token_id == 'admin-token':
-                        # Try the known admin token
-                        return 'doris_admin_token_123456'
-                    elif 'tenant' in token_info.token_id:
-                        # For tenant tokens, we'll need a different approach
-                        # For now, skip these as we don't know the raw token
-                        continue
-                        
-            return ""
-        except Exception as e:
-            self.logger.error(f"Error finding available token: {e}")
-            return ""
-    
-    async def configure_for_token(self, token: str) -> tuple[bool, str]:
-        """Configure connection manager for token with new priority logic
-        
-        Priority: Token-bound DB config > .env config > error
-        
-        Args:
-            token: Authentication token to get database config for
-            
-        Returns:
-            (success: bool, config_source: str): Result and which config was used
-            
-        Raises:
-            RuntimeError: If no valid database configuration is available
-        """
-        try:
-            # Priority 1: Try token-bound database config first
-            if self.token_manager:
-                db_config = self.token_manager.get_database_config_by_token(token)
-                if db_config:
-                    # Convert DatabaseConfig to dictionary
-                    token_db_config = {
-                        'host': db_config.host,
-                        'port': db_config.port,
-                        'user': db_config.user,
-                        'password': db_config.password,
-                        'database': db_config.database,
-                        'charset': db_config.charset
-                    }
-                    
-                    # Check if token-bound config is valid
-                    if (not self._is_config_empty(token_db_config['host']) and
-                        not self._is_config_empty(token_db_config['user'])):
-                        self.logger.info(f"Using token-bound database configuration for host: {token_db_config['host']}")
-                        self.active_db_config = token_db_config
-                        self._update_db_params_from_config(self.active_db_config)
-                        
-                        # Create/recreate connection pool with token-bound config
-                        await self._ensure_pool_with_current_config()
-                        
-                        return True, "token-bound"
-            
-            # Priority 2: Use global .env config if available
-            if self._has_valid_global_config():
-                self.logger.info("Using global .env database configuration")
-                self.active_db_config = self.original_db_config.copy()
-                self._update_db_params_from_config(self.active_db_config)
-                
-                # Create/recreate connection pool with global config
-                await self._ensure_pool_with_current_config()
-                
-                return True, "global-env"
-            
-            # Priority 3: No valid configuration available
-            error_msg = (
-                "No valid database configuration available for this token. "
-                "Please contact administrator to:\n"
-                "1. Add database configuration to tokens.json for this token, OR\n"
-                "2. Configure valid global database settings in .env file\n"
-                "Required fields: DB_HOST, DB_USER"
-            )
-            self.logger.error(error_msg)
-            raise RuntimeError(error_msg)
-            
-        except Exception as e:
-            self.logger.error(f"Failed to configure database for token: {e}")
-            raise
-    
-    async def _ensure_pool_with_current_config(self):
-        """Ensure connection pool exists with current configuration"""
-        try:
-            # If pool exists with different config, need to recreate it
-            # If no pool exists, create one with current config
-            if self.pool and not self.pool.closed:
-                # Since we can't reliably check pool config attributes, 
-                # we'll recreate the pool if we detect a potential config change
-                # by checking if current config differs from what we stored
-                pool_needs_recreation = False
-                
-                # Compare current config with what we might have used before
-                if hasattr(self, '_last_pool_config'):
-                    current_config = {
-                        'host': self.host,
-                        'port': self.port, 
-                        'user': self.user,
-                        'database': self.database
-                    }
-                    if current_config != self._last_pool_config:
-                        pool_needs_recreation = True
-                
-                if pool_needs_recreation:
-                    self.logger.info("Database configuration changed, recreating connection pool")
-                    await self._recreate_pool()
-            elif not self.pool:
-                self.logger.info("Creating connection pool with current configuration")
-                await self._create_pool_with_current_config()
-                
-            # Test the connection immediately
-            if not await self._test_pool_health():
-                raise RuntimeError(f"Database connection test failed for {self.host}:{self.port}")
-                
-        except Exception as e:
-            self.logger.error(f"Failed to ensure connection pool: {e}")
-            raise
-    
     async def _create_pool_with_current_config(self):
         """Create connection pool with current database configuration"""
         try:
@@ -553,65 +417,19 @@ class DorisConnectionManager:
         Returns:
             (is_valid, error_message): Configuration validation result
         """
-        # Check if Token authentication is enabled
-        token_auth_enabled = getattr(self.config.security, 'enable_token_auth', False)
         
-        # Check if tokens.json exists and has valid tokens with database configs
-        tokens_file_available = False
-        token_bound_configs_available = False
-        
-        if self.token_manager:
-            try:
-                # Check if tokens.json file exists
-                import os
-                tokens_file_path = getattr(self.token_manager, 'token_file_path', 'tokens.json')
-                tokens_file_available = os.path.exists(tokens_file_path)
-                
-                # Check if any tokens have database configurations
-                if tokens_file_available or self.token_manager._tokens:
-                    for token_hash, token_info in self.token_manager._tokens.items():
-                        if token_info.database_config:
-                            token_bound_configs_available = True
-                            break
-            except Exception:
-                pass
         
         # Validate .env database configuration
         env_config_valid = self._has_valid_global_config()
         
-        # Decision logic
-        if token_auth_enabled:
-            if tokens_file_available:
-                # tokens.json exists - either .env OR token-bound config must be valid
-                if env_config_valid or token_bound_configs_available:
-                    return True, "Configuration valid"
-                else:
-                    return False, (
-                        "Token authentication is enabled and tokens.json exists, but no valid database "
-                        "configuration found. Please provide either:\n"
-                        "1. Valid database configuration in .env file (DB_HOST, DB_USER, etc.)\n"
-                        "2. Database configuration in tokens.json for at least one token"
-                    )
-            else:
-                # tokens.json does not exist - must have valid .env config
-                if env_config_valid:
-                    return True, "Configuration valid"
-                else:
-                    return False, (
-                        "Token authentication is enabled but tokens.json file not found. "
-                        "Either:\n"
-                        "1. Create tokens.json file with token configurations\n"
-                        "2. Provide valid database configuration in .env file (DB_HOST, DB_USER, etc.)"
-                    )
+        # tokens.json does not exist - must have valid .env config
+        if env_config_valid:
+            return True, "Configuration valid"
         else:
-            # Token auth is disabled, must have valid .env config
-            if env_config_valid:
-                return True, "Configuration valid"
-            else:
-                return False, (
-                    "Token authentication is disabled. Valid database configuration is required "
-                    "in .env file (DB_HOST, DB_USER, etc.)"
-                )
+            return False, (
+                "Valid database configuration is required "
+                "in .env file (DB_HOST, DB_USER, etc.)"
+            )
 
     async def initialize(self):
         """Initialize connection pool with health monitoring"""
@@ -626,10 +444,9 @@ class DorisConnectionManager:
             self.logger.info(f"Initializing connection pool to {self.host}:{self.port}")
             
             # Only create connection pool if we have valid global config
-            # Token-bound configs will be handled dynamically during requests
             if not self._has_valid_global_config():
-                self.logger.info("No valid global database config, pool will be created dynamically for token-bound configs")
-                return
+                self.logger.error("No valid global database config found")
+                raise RuntimeError("No valid global database configuration available")
             
             # Create connection pool
             self.pool = await aiomysql.create_pool(
@@ -1297,19 +1114,7 @@ class DorisConnectionManager:
                 if not self.pool:
                     self.logger.warning("Connection pool is not available, attempting recovery...")
                     
-                    # Try to use token-bound configuration if available
-                    if self.token_manager and not self._has_valid_global_config():
-                        available_token = self._find_available_token_with_db_config()
-                        if available_token:
-                            self.logger.info(f"Using token-bound configuration for pool creation: {available_token}")
-                            try:
-                                await self.configure_for_token(available_token)
-                            except Exception as e:
-                                self.logger.error(f"Failed to configure with token-bound config: {e}")
-                    
-                    # Fallback to recovery
-                    if not self.pool:
-                        await self._recover_pool_with_lock()
+                    await self._recover_pool_with_lock()
                     
                     if not self.pool:
                         raise RuntimeError("Connection pool is not available and recovery failed")
@@ -1618,29 +1423,6 @@ class DorisConnectionManager:
         """
         connection = None
         try:
-            # FIX: Configure database for token BEFORE getting connection
-            # This ensures token-bound database configuration is used instead of global config
-            if auth_context and hasattr(auth_context, 'token') and auth_context.token:
-                try:
-                    success, config_source = await self.configure_for_token(auth_context.token)
-                    if success:
-                        self.logger.info(f"Session {session_id}: Using {config_source} database configuration")
-                    else:
-                        self.logger.warning(f"Session {session_id}: Token configuration failed, may use global config")
-                except Exception as token_config_error:
-                    # SECURITY: If token should have config but configuration fails, don't fallback
-                    # This prevents privilege escalation (using high-privilege default user)
-                    if self.token_manager:
-                        self.logger.error(f"Session {session_id}: Token database configuration failed: {token_config_error}")
-                        raise RuntimeError(
-                            f"Failed to configure database for authenticated token. "
-                            f"This is a security measure to prevent using default high-privilege credentials. "
-                            f"Error: {token_config_error}"
-                        )
-                    else:
-                        # No token manager, can use global config
-                        self.logger.warning(f"Session {session_id}: No token manager, using global config")
-
             # Always get fresh connection from pool (with configured database)
             connection = await self.get_connection(session_id)
 

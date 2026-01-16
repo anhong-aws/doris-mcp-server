@@ -407,36 +407,7 @@ class DorisSecurityManager:
         
         return self.auth_provider.token_manager.get_token_stats()
     
-    async def _validate_token_database_config(self, token: str, token_info) -> None:
-        """Validate database configuration for token immediately during authentication
-        
-        This ensures database connectivity issues are caught at authentication time,
-        not during query execution, providing better user experience.
-        
-        Args:
-            token: Raw authentication token
-            token_info: TokenInfo object from token validation
-            
-        Raises:
-            ValueError: If database configuration is invalid or connection fails
-        """
-        try:
-            if not self.connection_manager:
-                self.logger.warning("Connection manager not available for immediate database validation")
-                return
-            
-            # Configure and test database connection for this token
-            success, config_source = await self.connection_manager.configure_for_token(token)
-            
-            if success:
-                self.logger.info(f"Database configuration validated successfully for token {token_info.token_id} (source: {config_source})")
-            else:
-                raise ValueError("Database configuration validation failed")
-                
-        except Exception as e:
-            error_msg = f"Database configuration validation failed for token {token_info.token_id}: {str(e)}"
-            self.logger.error(error_msg)
-            raise ValueError(error_msg)
+    # _validate_token_database_config method has been removed since token database config is no longer supported
 
 
 class AuthenticationProvider:
@@ -629,9 +600,7 @@ class AuthenticationProvider:
             
             token_info = validation_result.token_info
             
-            # Immediately validate database configuration for this token
-            if self.security_manager:
-                await self.security_manager._validate_token_database_config(token, token_info)
+            # Token database configuration validation has been removed
             
             return AuthContext(
                 token_id=token_info.token_id,

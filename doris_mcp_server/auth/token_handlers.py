@@ -71,17 +71,6 @@ class TokenHandlers:
                 expires_hours_str = query_params.get("expires_hours")
                 description = query_params.get("description", "")
                 custom_token = query_params.get("custom_token")
-                # Database configuration from query params
-                db_config = None
-                if query_params.get("db_host"):
-                    db_config = DatabaseConfig(
-                        host=query_params.get("db_host", "localhost"),
-                        port=int(query_params.get("db_port", "9030")),
-                        user=query_params.get("db_user", "root"),
-                        password=query_params.get("db_password", ""),
-                        database=query_params.get("db_database", "information_schema"),
-                        fe_http_port=int(query_params.get("db_fe_http_port", "8030"))
-                    )
             else:
                 # POST request with JSON body
                 try:
@@ -95,23 +84,6 @@ class TokenHandlers:
                 expires_hours_str = body.get("expires_hours")
                 description = body.get("description", "")
                 custom_token = body.get("custom_token")
-                # Database configuration from JSON body
-                db_config = None
-                if body.get("database_config"):
-                    db_data = body["database_config"]
-                    try:
-                        db_config = DatabaseConfig(
-                            host=db_data.get("host", "localhost"),
-                            port=int(db_data.get("port", 9030)),
-                            user=db_data.get("user", "root"),
-                            password=db_data.get("password", ""),
-                            database=db_data.get("database", "information_schema"),
-                            fe_http_port=int(db_data.get("fe_http_port", 8030))
-                        )
-                    except (ValueError, TypeError) as e:
-                        return JSONResponse({
-                            "error": f"Invalid database configuration: {str(e)}"
-                        }, status_code=400)
             
             # Validate required fields
             if not token_id:
@@ -135,8 +107,7 @@ class TokenHandlers:
                     token_id=token_id,
                     expires_hours=expires_hours,
                     description=description,
-                    custom_token=custom_token,
-                    database_config=db_config
+                    custom_token=custom_token
                 )
                 
                 return JSONResponse({
@@ -456,35 +427,7 @@ class TokenHandlers:
                             </div>
                             
                             <div class="section" style="margin: 20px 0; padding: 15px; background: #f8f9fa; border-radius: 5px;">
-                                <h3>🗄️ Database Configuration (Optional)</h3>
-                                <p style="color: #666; font-size: 14px; margin-bottom: 15px;">Configure database connection for this token. Leave empty to use system defaults.</p>
-                                
-                                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
-                                    <div class="form-group">
-                                        <label for="db_host">Host:</label>
-                                        <input type="text" id="db_host" name="db_host" placeholder="localhost">
-                                    </div>
-                                    <div class="form-group">
-                                        <label for="db_port">Port:</label>
-                                        <input type="number" id="db_port" name="db_port" placeholder="9030">
-                                    </div>
-                                    <div class="form-group">
-                                        <label for="db_user">User:</label>
-                                        <input type="text" id="db_user" name="db_user" placeholder="root">
-                                    </div>
-                                    <div class="form-group">
-                                        <label for="db_password">Password:</label>
-                                        <input type="password" id="db_password" name="db_password" placeholder="(optional)">
-                                    </div>
-                                    <div class="form-group">
-                                        <label for="db_database">Database:</label>
-                                        <input type="text" id="db_database" name="db_database" placeholder="information_schema">
-                                    </div>
-                                    <div class="form-group">
-                                        <label for="db_fe_http_port">FE HTTP Port:</label>
-                                        <input type="number" id="db_fe_http_port" name="db_fe_http_port" placeholder="8030">
-                                    </div>
-                                </div>
+
                             </div>
                             
                             <button type="submit" class="btn-primary">Create Token</button>
@@ -561,26 +504,6 @@ class TokenHandlers:
                         if (!data.expires_hours) delete data.expires_hours;
                         if (!data.description) delete data.description;
                         if (!data.custom_token) delete data.custom_token;
-                        
-                        // Handle database configuration
-                        if (data.db_host) {{
-                            data.database_config = {{
-                                host: data.db_host,
-                                port: data.db_port ? parseInt(data.db_port) : 9030,
-                                user: data.db_user || 'root',
-                                password: data.db_password || '',
-                                database: data.db_database || 'information_schema',
-                                fe_http_port: data.db_fe_http_port ? parseInt(data.db_fe_http_port) : 8030
-                            }};
-                        }}
-                        
-                        // Remove individual database fields from data
-                        delete data.db_host;
-                        delete data.db_port;
-                        delete data.db_user;
-                        delete data.db_password;
-                        delete data.db_database;
-                        delete data.db_fe_http_port;
                         
                         try {{
                             const response = await fetch(getAuthURL('/token/create'), {{

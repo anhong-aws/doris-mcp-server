@@ -38,21 +38,8 @@ from ..utils.security import SecurityLevel
 
 
 @dataclass
-class DatabaseConfig:
-    """Database connection configuration for token binding"""
-    
-    host: str
-    port: int = 9030
-    user: str = ""
-    password: str = ""
-    database: str = "information_schema"
-    charset: str = "UTF8"
-    fe_http_port: int = 8030
-
-
-@dataclass
 class TokenInfo:
-    """Token information structure with optional database binding"""
+    """Token information structure"""
     
     token_id: str  # Unique token identifier for audit and management
     created_at: datetime = field(default_factory=datetime.utcnow)
@@ -60,7 +47,6 @@ class TokenInfo:
     last_used: Optional[datetime] = None
     description: str = ""  # Optional description for token purpose
     is_active: bool = True
-    database_config: Optional[DatabaseConfig] = None  # Optional database binding
 
 
 @dataclass
@@ -183,27 +169,12 @@ class TokenManager:
                 if expires_hours is not None:
                     expires_at = datetime.utcnow() + timedelta(hours=expires_hours)
             
-            # Parse database configuration if provided
-            database_config = None
-            if 'database_config' in token_config:
-                db_config = token_config['database_config']
-                database_config = DatabaseConfig(
-                    host=db_config.get('host', 'localhost'),
-                    port=db_config.get('port', 9030),
-                    user=db_config.get('user', 'root'),
-                    password=db_config.get('password', ''),
-                    database=db_config.get('database', 'information_schema'),
-                    charset=db_config.get('charset', 'UTF8'),
-                    fe_http_port=db_config.get('fe_http_port', 8030)
-                )
-            
             # Create token info
             token_info = TokenInfo(
                 token_id=token_config['token_id'],
                 expires_at=expires_at,
                 description=token_config.get('description', ''),
-                is_active=token_config.get('is_active', True),
-                database_config=database_config
+                is_active=token_config.get('is_active', True)
             )
             
             # Hash the token
@@ -214,8 +185,7 @@ class TokenManager:
             self._tokens[token_hash] = token_info
             self._token_ids[token_info.token_id] = token_hash
             
-            db_info = f" with DB binding ({database_config.host})" if database_config else ""
-            self.logger.debug(f"Added token '{token_info.token_id}'{db_info}")
+            self.logger.debug(f"Added token '{token_info.token_id}'")
             
         except Exception as e:
             self.logger.error(f"Failed to add token from config: {e}")
@@ -371,8 +341,7 @@ class TokenManager:
         token_id: str,
         expires_hours: Optional[int] = None,
         description: str = "",
-        custom_token: Optional[str] = None,
-        database_config: Optional[DatabaseConfig] = None
+        custom_token: Optional[str] = None
     ) -> str:
         """Create a new token"""
         try:
@@ -397,8 +366,7 @@ class TokenManager:
             token_info = TokenInfo(
                 token_id=token_id,
                 expires_at=expires_at,
-                description=description,
-                database_config=database_config
+                description=description
             )
             
             # Hash and store token
@@ -477,17 +445,7 @@ class TokenManager:
                     else:
                         token_config["expires_hours"] = 0
                 
-                # Add database config if present
-                if token_info.database_config:
-                    token_config["database_config"] = {
-                        "host": token_info.database_config.host,
-                        "port": token_info.database_config.port,
-                        "user": token_info.database_config.user,
-                        "password": token_info.database_config.password,
-                        "database": token_info.database_config.database,
-                        "charset": token_info.database_config.charset,
-                        "fe_http_port": token_info.database_config.fe_http_port
-                    }
+
                 
                 tokens_list.append(token_config)
             
@@ -575,18 +533,6 @@ class TokenManager:
             remaining = token_info.expires_at - token_info.created_at
             token_config["expires_hours"] = int(remaining.total_seconds() / 3600) if remaining.total_seconds() > 0 else None
         
-        # Add database config if present
-        if token_info.database_config:
-            token_config["database_config"] = {
-                "host": token_info.database_config.host,
-                "port": token_info.database_config.port,
-                "user": token_info.database_config.user,
-                "password": token_info.database_config.password,
-                "database": token_info.database_config.database,
-                "charset": token_info.database_config.charset,
-                "fe_http_port": token_info.database_config.fe_http_port
-            }
-        
         return token_config
     
     def _remove_token_from_file(self, token_id: str):
@@ -641,17 +587,7 @@ class TokenManager:
                 'is_expired': token_info.expires_at and datetime.utcnow() > token_info.expires_at if token_info.expires_at else False
             }
             
-            # Add database binding info (without sensitive data)
-            if token_info.database_config:
-                token_data['database_binding'] = {
-                    'host': token_info.database_config.host,
-                    'port': token_info.database_config.port,
-                    'user': token_info.database_config.user,
-                    'database': token_info.database_config.database,
-                    'has_password': bool(token_info.database_config.password)
-                }
-            else:
-                token_data['database_binding'] = None
+
                 
             tokens.append(token_data)
         
@@ -706,31 +642,7 @@ class TokenManager:
             self.logger.error(f"Failed to save tokens to file: {e}")
             return False
     
-    def get_database_config_by_token(self, token: str) -> Optional[DatabaseConfig]:
-        """Get database configuration bound to a token
-        
-        Args:
-            token: The raw token string
-            
-        Returns:
-            DatabaseConfig if token exists and has database binding, None otherwise
-        """
-        try:
-            token_hash = self._hash_token(token)
-            token_info = self._tokens.get(token_hash)
-            
-            if not token_info or not token_info.is_active:
-                return None
-                
-            # Check expiration
-            if token_info.expires_at and datetime.utcnow() > token_info.expires_at:
-                return None
-                
-            return token_info.database_config
-            
-        except Exception as e:
-            self.logger.error(f"Failed to get database config for token: {e}")
-            return None
+
     
     def get_token_stats(self) -> Dict[str, Any]:
         """Get token statistics"""
@@ -739,14 +651,11 @@ class TokenManager:
         active_tokens = sum(1 for info in self._tokens.values() if info.is_active)
         expired_tokens = sum(1 for info in self._tokens.values() 
                            if info.expires_at and now > info.expires_at)
-        tokens_with_db = sum(1 for info in self._tokens.values() 
-                           if info.database_config is not None)
         
         return {
             'total_tokens': total_tokens,
             'active_tokens': active_tokens,
             'expired_tokens': expired_tokens,
-            'tokens_with_database_binding': tokens_with_db,
             'expiry_enabled': self.enable_token_expiry,
             'default_expiry_hours': self.default_token_expiry_hours,
             'hot_reload_enabled': self.enable_hot_reload,

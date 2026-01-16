@@ -43,6 +43,7 @@ logger = get_logger(__name__)
 
 METADATA_DB_NAME="information_schema"
 INTERNAL_CATALOG_NAME="internal"
+DEFAULT_DB_NAME="default"
 
 # Import local modules
 from .db import DorisConnectionManager
@@ -333,9 +334,10 @@ class MetadataExtractor:
             # SECURITY FIX: Validate catalog_name and db_name to prevent SQL injection
             
             effective_db = self.db_name
-            # 假如sql中不包含(effective_db加上"."),但包含internal.,则删除internal.
-            if f"{effective_db}." not in sql and "internal." in sql:
-                sql = sql.replace("internal.", "")
+            # 防止ai自动取默认数据库，或者没有传数据库，导致查询失败
+            if f"{effective_db}." not in sql and f"{INTERNAL_CATALOG_NAME}." in sql:
+                sql = sql.replace(f"{INTERNAL_CATALOG_NAME}.{DEFAULT_DB_NAME}.", "")
+                sql = sql.replace(f"{INTERNAL_CATALOG_NAME}.", "")
             final_sql = sql
             # FIX: Try to get auth_context from context variable (set by HTTP middleware)
             # This allows token-bound database configuration to work
@@ -428,7 +430,8 @@ class MetadataExtractor:
         
         try:
             tables = await self.get_bi_database_tables_async(db_name=effective_db)
-            return self._format_response(success=True, result=tables)
+            result = {"database": effective_db, "table_list": tables}
+            return self._format_response(success=True, result=result)
         except Exception as e:
             logger.error(f"Failed to get database table list: {str(e)}", exc_info=True)
             return self._format_response(success=False, error=str(e), message="Error occurred while getting database table list")
