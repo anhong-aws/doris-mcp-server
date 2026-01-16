@@ -19,6 +19,7 @@ ENV/
 env.bak/
 venv.bak/
 .idea/
+.trae/
 .coverage
 coverage.xml
 doc/env1.txt

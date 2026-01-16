@@ -155,37 +155,36 @@ class DorisResourcesManager:
         if cached:
             return cached
 
-        connection = await self.connection_manager.get_connection("system")
+        async with self.connection_manager.get_connection_context("system") as connection:
+            # Query basic table information
+            tables_query = """
+            SELECT
+                table_name,
+                table_comment,
+                table_rows as row_count,
+                create_time
+            FROM information_schema.tables
+            WHERE table_schema = DATABASE()
+            AND table_type = 'BASE TABLE'
+            ORDER BY table_name
+            """
 
-        # Query basic table information
-        tables_query = """
-        SELECT
-            table_name,
-            table_comment,
-            table_rows as row_count,
-            create_time
-        FROM information_schema.tables
-        WHERE table_schema = DATABASE()
-        AND table_type = 'BASE TABLE'
-        ORDER BY table_name
-        """
+            auth_context = get_auth_context()
+            result = await connection.execute(tables_query, auth_context=auth_context)
+            tables = []
 
-        auth_context = get_auth_context()
-        result = await connection.execute(tables_query, auth_context=auth_context)
-        tables = []
+            for row in result.data:
+                # Get column information for the table
+                columns = await self._get_table_columns(connection, row["table_name"])
 
-        for row in result.data:
-            # Get column information for the table
-            columns = await self._get_table_columns(connection, row["table_name"])
-
-            table = TableMetadata(
-                name=row["table_name"],
-                comment=row.get("table_comment"),
-                row_count=row.get("row_count", 0),
-                columns=columns,
-                create_time=row.get("create_time"),
-            )
-            tables.append(table)
+                table = TableMetadata(
+                    name=row["table_name"],
+                    comment=row.get("table_comment"),
+                    row_count=row.get("row_count", 0),
+                    columns=columns,
+                    create_time=row.get("create_time"),
+                )
+                tables.append(table)
 
         await self.metadata_cache.set(cache_key, tables)
         return tables
@@ -217,73 +216,71 @@ class DorisResourcesManager:
         if cached:
             return cached
 
-        connection = await self.connection_manager.get_connection("system")
+        async with self.connection_manager.get_connection_context("system") as connection:
+            views_query = """
+            SELECT
+                table_name,
+                view_definition
+            FROM information_schema.views
+            WHERE table_schema = DATABASE()
+            ORDER BY table_name
+            """
 
-        views_query = """
-        SELECT
-            table_name,
-            view_definition
-        FROM information_schema.views
-        WHERE table_schema = DATABASE()
-        ORDER BY table_name
-        """
+            auth_context = get_auth_context()
+            result = await connection.execute(views_query, auth_context=auth_context)
+            views = []
 
-        auth_context = get_auth_context()
-        result = await connection.execute(views_query, auth_context=auth_context)
-        views = []
-
-        for row in result.data:
-            view = ViewMetadata(
-                name=row["table_name"],
-                # comment=row.get("table_comment"),
-                definition=row.get("view_definition"),
-            )
-            views.append(view)
+            for row in result.data:
+                view = ViewMetadata(
+                    name=row["table_name"],
+                    # comment=row.get("table_comment"),
+                    definition=row.get("view_definition"),
+                )
+                views.append(view)
 
         await self.metadata_cache.set(cache_key, views)
         return views
 
     async def _get_table_schema(self, table_name: str) -> str:
         """Get detailed structure information of table"""
-        connection = await self.connection_manager.get_connection("system")
+        async with self.connection_manager.get_connection_context("system") as connection:
+            # Get basic table information
+            table_info_query = """
+            SELECT
+                table_name,
+                table_comment,
+                table_rows,
+                create_time,
+                engine
+            FROM information_schema.tables
+            WHERE table_schema = DATABASE()
+            AND table_name = %s
+            """
 
-        # Get basic table information
-        table_info_query = """
-        SELECT
-            table_name,
-            table_comment,
-            table_rows,
-            create_time,
-            engine
-        FROM information_schema.tables
-        WHERE table_schema = DATABASE()
-        AND table_name = %s
-        """
+            auth_context = get_auth_context()
+            table_result = await connection.execute(table_info_query, params=(table_name,), auth_context=auth_context)
+            if not table_result.data:
+                raise ValueError(f"Table {table_name} does not exist")
 
-        auth_context = get_auth_context()
-        table_result = await connection.execute(table_info_query, params=(table_name,), auth_context=auth_context)
-        if not table_result.data:
-            raise ValueError(f"Table {table_name} does not exist")
+            table_info = table_result.data[0]
 
-        table_info = table_result.data[0]
+            # Get column information
+            columns = await self._get_table_columns(connection, table_name)
 
-        # Get column information
-        columns = await self._get_table_columns(connection, table_name)
+            # Get index information
+            indexes = await self._get_table_indexes(connection, table_name)
 
-        # Get index information
-        indexes = await self._get_table_indexes(connection, table_name)
+            schema_info = {
+                "table_name": table_info["table_name"],
+                "comment": table_info.get("table_comment"),
+                "row_count": table_info.get("table_rows", 0),
+                "create_time": str(table_info.get("create_time")),
+                "engine": table_info.get("engine"),
+                "columns": columns,
+                "indexes": indexes,
+            }
 
-        schema_info = {
-            "table_name": table_info["table_name"],
-            "comment": table_info.get("table_comment"),
-            "row_count": table_info.get("table_rows", 0),
-            "create_time": str(table_info.get("create_time")),
-            "engine": table_info.get("engine"),
-            "columns": columns,
-            "indexes": indexes,
-        }
-
-        return json.dumps(schema_info, ensure_ascii=False, indent=2)
+            return json.dumps(schema_info, ensure_ascii=False, indent=2)
 
     async def _get_table_indexes(self, connection, table_name: str) -> list[dict]:
         """Get index information for table"""
@@ -305,59 +302,57 @@ class DorisResourcesManager:
 
     async def _get_view_definition(self, view_name: str) -> str:
         """Get definition information of view"""
-        connection = await self.connection_manager.get_connection("system")
+        async with self.connection_manager.get_connection_context("system") as connection:
+            view_query = """
+            SELECT
+                table_name,
+                view_definition
+            FROM information_schema.views
+            WHERE table_schema = DATABASE()
+            AND table_name = %s
+            """
 
-        view_query = """
-        SELECT
-            table_name,
-            view_definition
-        FROM information_schema.views
-        WHERE table_schema = DATABASE()
-        AND table_name = %s
-        """
+            auth_context = get_auth_context()
+            result = await connection.execute(view_query, params=(view_name,), auth_context=auth_context)
+            if not result.data:
+                raise ValueError(f"View {view_name} does not exist")
 
-        auth_context = get_auth_context()
-        result = await connection.execute(view_query, params=(view_name,), auth_context=auth_context)
-        if not result.data:
-            raise ValueError(f"View {view_name} does not exist")
+            view_info = result.data[0]
 
-        view_info = result.data[0]
+            schema_info = {
+                "view_name": view_info["table_name"],
+                # "comment": view_info.get("table_comment"),
+                "definition": view_info.get("view_definition"),
+            }
 
-        schema_info = {
-            "view_name": view_info["table_name"],
-            # "comment": view_info.get("table_comment"),
-            "definition": view_info.get("view_definition"),
-        }
-
-        return json.dumps(schema_info, ensure_ascii=False, indent=2)
+            return json.dumps(schema_info, ensure_ascii=False, indent=2)
 
     async def _get_database_stats(self) -> str:
         """Get database statistics"""
-        connection = await self.connection_manager.get_connection("system")
+        async with self.connection_manager.get_connection_context("system") as connection:
+            # Get table statistics
+            table_stats_query = """
+            SELECT
+                COUNT(*) as table_count,
+                SUM(table_rows) as total_rows
+            FROM information_schema.tables
+            WHERE table_schema = DATABASE()
+            AND table_type = 'BASE TABLE'
+            """
 
-        # Get table statistics
-        table_stats_query = """
-        SELECT
-            COUNT(*) as table_count,
-            SUM(table_rows) as total_rows
-        FROM information_schema.tables
-        WHERE table_schema = DATABASE()
-        AND table_type = 'BASE TABLE'
-        """
+            auth_context = get_auth_context()
+            table_result = await connection.execute(table_stats_query, auth_context=auth_context)
+            table_stats = table_result.data[0] if table_result.data else {}
 
-        auth_context = get_auth_context()
-        table_result = await connection.execute(table_stats_query, auth_context=auth_context)
-        table_stats = table_result.data[0] if table_result.data else {}
+            # Get view statistics
+            view_stats_query = """
+            SELECT COUNT(*) as view_count
+            FROM information_schema.views
+            WHERE table_schema = DATABASE()
+            """
 
-        # Get view statistics
-        view_stats_query = """
-        SELECT COUNT(*) as view_count
-        FROM information_schema.views
-        WHERE table_schema = DATABASE()
-        """
-
-        view_result = await connection.execute(view_stats_query, auth_context=auth_context)
-        view_stats = view_result.data[0] if view_result.data else {}
+            view_result = await connection.execute(view_stats_query, auth_context=auth_context)
+            view_stats = view_result.data[0] if view_result.data else {}
 
         stats_info = {
             "database_name": "current_database",

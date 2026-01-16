@@ -788,7 +788,7 @@ class DorisServer:
                 Route("/db/connections", db_connections, methods=["GET"]),
             ],
             lifespan=lifespan,
-        )
+            )
             
             # Custom ASGI app that handles both /mcp and /mcp/ without redirects
             async def mcp_app(scope, receive, send):
@@ -913,38 +913,22 @@ class DorisServer:
                     self.logger.warning(f"Unsupported scope type: {scope['type']}")
                     return
             
-            # Choose startup method based on worker count
-            if workers > 1:
-                self.logger.info(f"Using multi-process mode with {workers} workers")
-                self.logger.info("Note: Multi-worker mode provides full MCP functionality with independent worker processes")
-                
-                # Use the dedicated multiworker app module with full MCP support
-                uvicorn.run(
-                    "doris_mcp_server.multiworker_app:app",
-                    host=host,
-                    port=port,
-                    workers=workers,
-                    log_level="info",
-                    timeout_graceful_shutdown=5  # 5秒超时，强制关闭连接
-                )
-                
-            else:
-                self.logger.info("Using single-process mode")
-                # Single worker mode, use original logic with session manager lifecycle
-                config = uvicorn.Config(
-                    app=mcp_app,
-                    host=host,
-                    port=port,
-                    log_level="info",
-                    timeout_graceful_shutdown=5  # 5秒超时，强制关闭连接
+            self.logger.info("Using single-process mode")
+            # Single worker mode, use original logic with session manager lifecycle
+            config = uvicorn.Config(
+                app=mcp_app,
+                host=host,
+                port=port,
+                log_level="info",
+                timeout_graceful_shutdown=5  # 5秒超时，强制关闭连接
 
-                )
-                server = uvicorn.Server(config)
-                
-                # Run session manager and server together
-                async with session_manager.run():
-                    self.logger.info("Session manager started, now starting HTTP server")
-                    await server.serve()
+            )
+            server = uvicorn.Server(config)
+            
+            # Run session manager and server together
+            async with session_manager.run():
+                self.logger.info("Session manager started, now starting HTTP server")
+                await server.serve()
 
         except Exception as e:
             self.logger.error(f"Streamable HTTP server startup failed: {e}")

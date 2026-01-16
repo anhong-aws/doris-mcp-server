@@ -291,8 +291,6 @@ class DorisConnectionManager:
         # Connection pool state management
         self.pool_recovering = False
         self.pool_health_check_task = None
-        self.pool_cleanup_task = None
-        self._cleanup_in_progress = False  # Flag to prevent concurrent health checks and cleanup
         self._health_check_in_progress = False  # Flag to prevent concurrent health checks
         
         # Metrics tracking
@@ -348,65 +346,11 @@ class DorisConnectionManager:
         """Check if global database configuration is valid and non-empty"""
         return (not self._is_config_empty(self.original_db_config['host']) and
                 not self._is_config_empty(self.original_db_config['user']))
-    
-    async def _create_pool_with_current_config(self):
-        """Create connection pool with current database configuration"""
-        try:
-            self.pool = await aiomysql.create_pool(
-                host=self.host,
-                port=self.port,
-                user=self.user,
-                password=self.password,
-                db=self.database,
-                charset=self.charset,
-                minsize=self.minsize,
-                maxsize=self.maxsize,
-                pool_recycle=self.pool_recycle,
-                connect_timeout=self.connect_timeout,
-                autocommit=True
-            )
-            
-            # Store the current config for comparison later
-            self._last_pool_config = {
-                'host': self.host,
-                'port': self.port,
-                'user': self.user,
-                'database': self.database
-            }
-            
-            # Test initial connection
-            if not await self._test_pool_health():
-                raise RuntimeError("Connection pool health check failed")
-
-            # Start background monitoring tasks if not already running
-            if not self.pool_health_check_task or self.pool_health_check_task.done():
-                self.pool_health_check_task = asyncio.create_task(self._pool_health_monitor())
-            if not self.pool_cleanup_task or self.pool_cleanup_task.done():
-                self.pool_cleanup_task = asyncio.create_task(self._pool_cleanup_monitor())
-            if not self.connection_cleanup_task or self.connection_cleanup_task.done():
-                self.connection_cleanup_task = asyncio.create_task(self._start_connection_cleanup())
-            
-            # Perform initial pool warmup
-            await self._warmup_pool()
-            
-            self.logger.info(f"Connection pool created successfully with {self.host}:{self.port}")
-            
-        except Exception as e:
-            self.logger.error(f"Failed to create connection pool: {e}")
-            raise
 
     async def _recreate_pool(self):
-        """Recreate connection pool with current database configuration"""
         try:
-            # Close existing pool
-            if self.pool and not self.pool.closed:
-                self.pool.close()
-                await self.pool.wait_closed()
-                self.pool = None
-            
             # Create new pool with current config
-            await self._create_pool_with_current_config()
-            
+            await self._recover_pool_with_lock()
         except Exception as e:
             self.logger.error(f"Failed to recreate connection pool: {e}")
             raise
@@ -431,24 +375,63 @@ class DorisConnectionManager:
                 "in .env file (DB_HOST, DB_USER, etc.)"
             )
 
-    async def initialize(self):
-        """Initialize connection pool with health monitoring"""
+    async def _initialize_connection_pool(self, timeout: float, mode: str, strict: bool = False) -> bool:
+        """
+        Internal method to initialize connection pool with configurable parameters
+        
+        Args:
+            timeout: Maximum time to wait for connection establishment
+            mode: Mode identifier for logging ("stdio" or "http")
+            strict: If True, raises exceptions on failure; if False, returns False on failure
+            
+        Returns:
+            bool: True if initialization succeeded, False otherwise
+            
+        Raises:
+            RuntimeError: If strict=True and initialization fails
+        """
         try:
-            # First validate configuration
+            # Validate that we have valid global configuration
+            if not self._has_valid_global_config():
+                error_msg = (
+                    f"{mode} mode requires valid global database configuration. "
+                    "Please set DORIS_HOST and DORIS_USER in environment variables or .env file. "
+                    f"Current config: host='{self.host}', user='{self.user}'"
+                )
+                if strict:
+                    self.logger.error(error_msg)
+                    raise RuntimeError(error_msg)
+                self.logger.info("No valid global database config found")
+                return False
+            
+            self.logger.info(f"{mode} mode database config validated: {self.host}:{self.port}")
+            
+            # Validate configuration format
             is_valid, error_message = self.validate_database_configuration()
             if not is_valid:
-                self.logger.error(f"Database configuration validation failed: {error_message}")
-                raise RuntimeError(f"Database configuration validation failed:\n{error_message}")
+                error_msg = f"Database configuration validation failed: {error_message}"
+                if strict:
+                    self.logger.error(error_msg)
+                    raise RuntimeError(error_msg)
+                self.logger.warning(error_msg)
+                return False
             
-            self.logger.info(f"Database configuration validated successfully")
-            self.logger.info(f"Initializing connection pool to {self.host}:{self.port}")
+            # Test connectivity with timeout
+            self.logger.info(f"Testing database connectivity for {mode} mode...")
+            if not await self._test_connectivity_with_timeout(timeout):
+                error_msg = (
+                    f"Failed to connect to Doris database within {timeout} seconds. "
+                    f"Please check if Doris is running at {self.host}:{self.port} "
+                    f"and verify network connectivity."
+                )
+                if strict:
+                    self.logger.error(error_msg)
+                    raise RuntimeError(error_msg)
+                self.logger.warning("Global database connection test failed")
+                return False
             
-            # Only create connection pool if we have valid global config
-            if not self._has_valid_global_config():
-                self.logger.error("No valid global database config found")
-                raise RuntimeError("No valid global database configuration available")
+            # Initialize the connection pool
             
-            # Create connection pool
             self.pool = await aiomysql.create_pool(
                 host=self.host,
                 port=self.port,
@@ -463,29 +446,51 @@ class DorisConnectionManager:
                 autocommit=True
             )
             
-            # Test initial connection
-            if not await self._test_pool_health():
-                raise RuntimeError("Connection pool health check failed")
+            # Test pool health
 
-            # Start background monitoring tasks
-            self.pool_health_check_task = asyncio.create_task(self._pool_health_monitor())
-            self.pool_cleanup_task = asyncio.create_task(self._pool_cleanup_monitor())
+            if self.pool:
+                if not await self._test_pool_health():
+                    # Clean up the pool if health test fails
+                    if self.pool:
+                        self.pool.close()
+                        await self.pool.wait_closed()
+                        self.pool = None
+                    error_msg = "Database connection pool was not created successfully."
+                    if strict:
+                        self.logger.error(error_msg)
+                        raise RuntimeError(error_msg)
+                    self.logger.warning("Database connection pool creation failed")
+                    return False
+            else:
+                error_msg = "Database connection pool was not created successfully."
+                if strict:
+                    self.logger.error(error_msg)
+                    raise RuntimeError(error_msg)
+                self.logger.warning("Database connection pool creation failed")
+                return False
             
             # Perform initial pool warmup
             await self._warmup_pool()
+
+            # Start background monitoring tasks
+            self.pool_health_check_task = asyncio.create_task(self._pool_health_monitor())
             
-            self.logger.info(f"Connection pool initialized successfully, min connections: {self.minsize}, max connections: {self.maxsize}")
+            
+            self.logger.info(f"Database connection established successfully for {mode} mode")
+            return True
             
         except Exception as e:
-            self.logger.error(f"Failed to initialize connection pool: {e}")
-            raise
-
+            if strict:
+                self.logger.error(f"{mode} mode database initialization failed: {e}")
+                raise
+            self.logger.warning(f"{mode} mode database initialization encountered error: {e}")
+            return False
+    
     async def initialize_for_stdio_mode(self, timeout: float = 30.0) -> None:
         """
         Initialize connection pool for stdio mode with strict validation
         
         stdio mode requires a working database connection because:
-        - No HTTP authentication mechanism to support token-bound configs
         - All database operations depend on the global connection pool
         
         Args:
@@ -494,114 +499,13 @@ class DorisConnectionManager:
         Raises:
             RuntimeError: If configuration is invalid or connection fails
         """
-        try:
-            # Validate that we have valid global configuration
-            if not self._has_valid_global_config():
-                error_msg = (
-                    "stdio mode requires valid global database configuration. "
-                    "Please set DORIS_HOST and DORIS_USER in environment variables or .env file. "
-                    f"Current config: host='{self.host}', user='{self.user}'"
-                )
-                self.logger.error(error_msg)
-                raise RuntimeError(error_msg)
-            
-            self.logger.info(f"stdio mode database config validated: {self.host}:{self.port}")
-            
-            # Validate configuration format
-            is_valid, error_message = self.validate_database_configuration()
-            if not is_valid:
-                error_msg = f"Database configuration validation failed: {error_message}"
-                self.logger.error(error_msg)
-                raise RuntimeError(error_msg)
-            
-            # Test connectivity with timeout
-            self.logger.info("Testing database connectivity for stdio mode...")
-            if not await self._test_connectivity_with_timeout(timeout):
-                error_msg = (
-                    f"Failed to connect to Doris database within {timeout} seconds. "
-                    f"Please check if Doris is running at {self.host}:{self.port} "
-                    f"and verify network connectivity."
-                )
-                self.logger.error(error_msg)
-                raise RuntimeError(error_msg)
-            
-            # Initialize the connection pool
-            await self._create_connection_pool()
-            
-            # Verify that we have a working connection pool
-            if not self.pool:
-                error_msg = "Database connection pool was not created successfully."
-                self.logger.error(error_msg)
-                raise RuntimeError(error_msg)
-            
-            # Start background monitoring tasks
-            self.pool_health_check_task = asyncio.create_task(self._pool_health_monitor())
-            self.pool_cleanup_task = asyncio.create_task(self._pool_cleanup_monitor())
-            
-            # Perform initial pool warmup
-            await self._warmup_pool()
-            
-            self.logger.info("Database connection established successfully for stdio mode")
-            
-        except Exception as e:
-            self.logger.error(f"stdio mode database initialization failed: {e}")
-            raise
+        success = await self._initialize_connection_pool(timeout, "stdio", strict=True)
     
     async def initialize_for_http_mode(self) -> bool:
-        """
-        Initialize connection pool for HTTP mode with graceful degradation
-        
-        HTTP mode can work without global database configuration because:
-        - Supports token-bound database configurations
-        - Can handle authentication and use per-request database configs
-        - Has fallback mechanisms for database operations
-        
-        Returns:
-            bool: True if global database pool was created, False if gracefully degraded
-        """
-        try:
-            # First validate configuration format if we have one
-            if self._has_valid_global_config():
-                is_valid, error_message = self.validate_database_configuration()
-                if not is_valid:
-                    self.logger.warning(f"Global database configuration invalid: {error_message}")
-                    self.logger.info("HTTP mode will rely on token-bound database configurations")
-                    return False
-                
-                # Try to establish global connection pool
-                self.logger.info(f"Attempting to create global connection pool: {self.host}:{self.port}")
-                
-                try:
-                    # Test connectivity with shorter timeout for HTTP mode
-                    if await self._test_connectivity_with_timeout(10.0):
-                        await self._create_connection_pool()
-                        
-                        if self.pool:
-                            # Start background monitoring tasks
-                            self.pool_health_check_task = asyncio.create_task(self._pool_health_monitor())
-                            self.pool_cleanup_task = asyncio.create_task(self._pool_cleanup_monitor())
-                            
-                            # Perform initial pool warmup
-                            await self._warmup_pool()
-                            
-                            self.logger.info("Global database connection pool created successfully for HTTP mode")
-                            return True
-                    else:
-                        self.logger.warning("Global database connection test failed, will use token-bound configs")
-                        return False
-                        
-                except Exception as pool_error:
-                    self.logger.warning(f"Failed to create global connection pool: {pool_error}")
-                    self.logger.info("HTTP mode will rely on token-bound database configurations")
-                    return False
-            else:
-                self.logger.info("No valid global database config found, HTTP mode will use token-bound configurations")
-                return False
-                
-        except Exception as e:
-            self.logger.warning(f"HTTP mode database initialization encountered error: {e}")
-            self.logger.info("HTTP mode will rely on token-bound database configurations")
-            return False
+        success = await self._initialize_connection_pool(10.0, "HTTP", strict=True)
+        if not success:
+            self.logger.info("Init global connection pool failed")
+        return success
     
     async def _test_connectivity_with_timeout(self, timeout: float) -> bool:
         """
@@ -656,36 +560,6 @@ class DorisConnectionManager:
         finally:
             if conn:
                 conn.close()
-    
-    async def _create_connection_pool(self) -> None:
-        """
-        Create the connection pool
-        
-        Raises:
-            Exception: If pool creation fails
-        """
-        self.pool = await aiomysql.create_pool(
-            host=self.host,
-            port=self.port,
-            user=self.user,
-            password=self.password,
-            db=self.database,
-            charset=self.charset,
-            minsize=self.minsize,
-            maxsize=self.maxsize,
-            pool_recycle=self.pool_recycle,
-            connect_timeout=self.connect_timeout,
-            autocommit=True
-        )
-        
-        # Test pool health
-        if not await self._test_pool_health():
-            # Clean up the pool if health test fails
-            if self.pool:
-                self.pool.close()
-                await self.pool.wait_closed()
-                self.pool = None
-            raise RuntimeError("Connection pool health check failed")
 
     async def _test_pool_health(self) -> bool:
         """Enhanced connection pool health test with timeout and multiple checks"""
@@ -706,6 +580,8 @@ class DorisConnectionManager:
             self.logger.debug(f"Pool health check starting with stats: {pool_stats}")
 
             conn = None
+            connection_healthy = False
+            
             # Check 2: Try to acquire a connection with timeout
             try:
                 async with asyncio.timeout(8.0):  # Increased timeout from 5 to 8 seconds
@@ -721,7 +597,7 @@ class DorisConnectionManager:
                 self.log_connection_error('connection_error', f'Connection acquisition error during health check: {acquire_error}. Pool stats: {pool_stats}')
                 return False
 
-            # If we got a connection, make sure to release it properly
+            # If we got a connection, test it properly
             try:
                 # Check connection state
                 conn_state = {
@@ -743,35 +619,65 @@ class DorisConnectionManager:
                             if not result or result[0] != 1:
                                 self.logger.error(f"Pool health test failed: Unexpected query result: {result}")
                                 self.log_connection_error('validation_error', f'Unexpected query result during health check: {result}')
+                                # Close unhealthy connection
+                                await conn.ensure_closed()
+                                self.logger.debug("Closed unhealthy connection due to unexpected query result")
                                 return False
                 except asyncio.TimeoutError:
                     self.logger.error("Pool health test failed: Query execution timeout")
                     self.log_connection_error('query_timeout', 'Query execution timeout during health check')
+                    # Close unhealthy connection
+                    await conn.ensure_closed()
+                    self.logger.debug("Closed unhealthy connection due to query timeout")
                     return False
                 except Exception as query_error:
                     self.logger.error(f"Pool health test failed: Query execution error: {query_error}")
                     self.log_connection_error('query_error', f'Query execution error during health check: {query_error}')
+                    # Close unhealthy connection
+                    await conn.ensure_closed()
+                    self.logger.debug(f"Closed unhealthy connection due to query error: {query_error}")
                     return False
 
                 # Check 4: Verify connection properties
                 if hasattr(conn, 'closed') and conn.closed:
                     self.logger.error("Pool health test failed: Connection is closed")
                     self.log_connection_error('validation_error', 'Connection is closed during health check')
+                    # Close unhealthy connection (already closed, but be safe)
+                    try:
+                        await conn.ensure_closed()
+                    except Exception:
+                        pass
+                    self.logger.debug("Connection already closed")
                     return False
 
-                # All checks passed
+                # All checks passed - connection is healthy
+                connection_healthy = True
                 self.logger.debug("✅ All health check tests passed")
                 return True
                 
             finally:
-                # Always release the connection back to the pool
+                # Only release healthy connections back to the pool
                 if conn:
                     try:
-                        self.pool.release(conn)
-                        self.logger.debug("Successfully released connection back to pool")
+                        if connection_healthy:
+                            self.pool.release(conn)
+                            self.logger.debug("Successfully released healthy connection back to pool")
+                        else:
+                            # Connection was marked unhealthy during tests
+                            try:
+                                await conn.ensure_closed()
+                                self.logger.debug("Closed unhealthy connection in finally block")
+                            except Exception as close_error:
+                                self.logger.error(f"Error closing unhealthy connection: {close_error}")
+                                self.log_connection_error('connection_error', f'Error closing unhealthy connection: {close_error}')
                     except Exception as release_error:
-                        self.logger.error(f"Error releasing connection during health test: {release_error}")
-                        self.log_connection_error('connection_error', f'Error releasing connection during health check: {release_error}')
+                        self.logger.error(f"Error handling connection in finally block: {release_error}")
+                        self.log_connection_error('connection_error', f'Error handling connection in finally block: {release_error}')
+                        # If any error, ensure connection is closed
+                        try:
+                            await conn.ensure_closed()
+                        except Exception:
+                            pass
 
         except Exception as e:
             self.logger.error(f"Pool health test failed with unexpected error: {e}")
@@ -842,9 +748,6 @@ class DorisConnectionManager:
             try:
                 await asyncio.sleep(self.health_check_interval)
                 # Skip health check if cleanup or another health check is in progress
-                if hasattr(self, '_cleanup_in_progress') and self._cleanup_in_progress:
-                    self.logger.debug("Cleanup in progress, skipping health check")
-                    continue
                 if hasattr(self, '_health_check_in_progress') and self._health_check_in_progress:
                     self.logger.debug("Another health check in progress, skipping")
                     continue
@@ -855,20 +758,6 @@ class DorisConnectionManager:
             except Exception as e:
                 self.logger.error(f"Pool health monitor error: {e}")
 
-    async def _pool_cleanup_monitor(self):
-        """Background task to clean up stale connections"""
-        self.logger.info("🧹 Starting pool cleanup monitor")
-        
-        while True:
-            try:
-                await asyncio.sleep(self.health_check_interval * 2)  # Less frequent cleanup
-                await self._cleanup_stale_connections()
-            except asyncio.CancelledError:
-                self.logger.info("Pool cleanup monitor stopped")
-                break
-            except Exception as e:
-                self.logger.error(f"Pool cleanup monitor error: {e}")
-
     async def _check_pool_health(self):
         """Check and maintain pool health"""
         try:
@@ -876,37 +765,6 @@ class DorisConnectionManager:
             if self.pool_recovering:
                 self.logger.debug("Pool recovery in progress, skipping health check")
                 return
-                
-            # Test pool with a simple query
-            health_ok = await self._test_pool_health()
-            
-            if health_ok:
-                self.logger.debug("✅ Pool health check passed")
-                self.metrics.last_health_check = datetime.utcnow()
-            else:
-                self.logger.warning("❌ Pool health check failed, attempting recovery")
-                await self._recover_pool()
-                
-        except Exception as e:
-            self.logger.error(f"Pool health check error: {e}")
-            await self._recover_pool()
-
-    async def _cleanup_stale_connections(self):
-        """Proactively clean up potentially stale connections"""
-        # Skip cleanup if recovery is in progress
-        if self.pool_recovering:
-            self.logger.debug("Recovery in progress, skipping stale connection cleanup")
-            return
-            
-        # Skip cleanup if health check is in progress
-        if hasattr(self, '_health_check_in_progress') and self._health_check_in_progress:
-            self.logger.debug("Health check in progress, skipping stale connection cleanup")
-            return
-            
-        # Set cleanup flag to prevent concurrent health checks
-        self._cleanup_in_progress = True
-        try:
-            self.logger.debug("🧹 Checking for stale connections")
             
             # Skip cleanup if no pool or pool is closed
             if not self.pool or self.pool.closed:
@@ -920,157 +778,115 @@ class DorisConnectionManager:
             self.logger.debug(f"Pool stats before cleanup: size={pool_size}, freesize={pool_free}")
             
             # If pool has idle connections, test some of them
-            if pool_free > 0:
-                test_count = min(pool_free, 2)  # Test up to 2 idle connections
-                conn = None
+            test_count = max(pool_free, 1)  # Test up to idle connections
+            for i in range(test_count):
+                # Test pool with a simple query
+                health_ok = await self._test_pool_health()
                 
-                for i in range(test_count):
-                    try:
-                        # Acquire connection, test it, and release
-                        self.logger.debug(f"Testing stale connection {i+1}/{test_count}")
-                        conn = await asyncio.wait_for(self.pool.acquire(), timeout=8)
-                        
-                        # Quick test
-                        async with conn.cursor() as cursor:
-                            await asyncio.wait_for(cursor.execute("SELECT 1"), timeout=5)
-                            await cursor.fetchone()
-                        
-                        # Connection is healthy, release it
-                        self.pool.release(conn)
-                        self.logger.debug(f"Stale connection test {i+1} passed, connection released back to pool")
-                        conn = None  # Reset connection reference after release
-                        
-                    except asyncio.TimeoutError:
-                        self.logger.debug(f"Stale connection test {i+1} timed out")
-                        try:
-                            if conn and hasattr(conn, 'ensure_closed'):
-                                await conn.ensure_closed()
-                                self.logger.debug(f"Timed out connection {i+1} closed")
-                        except Exception as close_error:
-                            self.logger.debug(f"Error closing timed out connection: {close_error}")
-                    except Exception as e:
-                        self.logger.debug(f"Stale connection test {i+1} failed: {e}")
-                        try:
-                            if conn and hasattr(conn, 'ensure_closed'):
-                                await conn.ensure_closed()
-                                self.logger.debug(f"Failed connection {i+1} closed")
-                        except Exception as close_error:
-                            self.logger.debug(f"Error closing failed connection: {close_error}")
-                    finally:
-                        # Ensure connection is either released or closed
-                        if conn and hasattr(conn, 'closed') and not conn.closed:
-                            try:
-                                self.pool.release(conn)
-                                self.logger.debug(f"Fallback: Released connection {i+1} in finally block")
-                            except Exception:
-                                try:
-                                    await conn.ensure_closed()
-                                    self.logger.debug(f"Fallback: Closed connection {i+1} in finally block")
-                                except Exception:
-                                    pass
-                
-                self.logger.debug(f"Stale connection cleanup completed, tested {test_count} connections")
+                if health_ok:
+                    self.logger.debug("✅ Pool health check passed")
+                    self.metrics.last_health_check = datetime.utcnow()
+                else:
+                    self.logger.warning("❌ Pool health check failed, attempting recovery")
+                    await self._recover_pool_with_lock()
+                    break
                 
         except Exception as e:
-            self.logger.error(f"Stale connection cleanup error: {e}")
-        finally:
-            # Clear cleanup flag
-            self._cleanup_in_progress = False
+            self.logger.error(f"Pool health check error: {e}")
+            await self._recover_pool_with_lock()
 
     async def _recover_pool(self):
         """Recover connection pool when health check fails"""
-        # Use lock to prevent concurrent recovery attempts
-        async with self.pool_recovery_lock:
-            # Check if another recovery is already in progress
-            if self.pool_recovering:
-                self.logger.debug("Pool recovery already in progress, waiting...")
-                return
-                
-            try:
-                self.pool_recovering = True
-                max_retries = 3
-                retry_delay = 5  # seconds
-                
-                for attempt in range(max_retries):
-                    try:
-                        self.logger.info(f"🔄 Attempting pool recovery (attempt {attempt + 1}/{max_retries})")
-                        
-                        # Try to close existing pool with timeout
-                        if self.pool:
-                            try:
-                                if not self.pool.closed:
-                                    self.pool.close()
-                                    await asyncio.wait_for(self.pool.wait_closed(), timeout=3.0)
-                                self.logger.debug("Old pool closed successfully")
-                            except asyncio.TimeoutError:
-                                self.logger.warning("Pool close timeout, forcing cleanup")
-                            except Exception as e:
-                                self.logger.warning(f"Error closing old pool: {e}")
-                            finally:
-                                self.pool = None
-                        
-                        # Wait before creating new pool (reduced delay)
-                        if attempt > 0:
-                            await asyncio.sleep(2)  # Reduced from 5 to 2 seconds
-                        
-                        # Recreate pool with timeout
-                        self.logger.debug("Creating new connection pool...")
-                        self.pool = await asyncio.wait_for(
-                            aiomysql.create_pool(
-                                host=self.host,
-                                port=self.port,
-                                user=self.user,
-                                password=self.password,
-                                db=self.database,
-                                charset=self.charset,
-                                minsize=self.minsize,
-                                maxsize=self.maxsize,
-                                pool_recycle=self.pool_recycle,
-                                connect_timeout=self.connect_timeout,
-                                autocommit=True
-                            ),
-                            timeout=10.0
-                        )
-                        
-                        # Test recovered pool with timeout
-                        if await asyncio.wait_for(self._test_pool_health(), timeout=5.0):
-                            self.logger.info(f"✅ Pool recovery successful on attempt {attempt + 1}")
-                            # Re-warm the pool with timeout
-                            try:
-                                await asyncio.wait_for(self._warmup_pool(), timeout=5.0)
-                            except asyncio.TimeoutError:
-                                self.logger.warning("Pool warmup timeout, but recovery successful")
-                            return
-                        else:
-                            self.logger.warning(f"❌ Pool recovery health check failed on attempt {attempt + 1}")
-                            
-                    except asyncio.TimeoutError:
-                        self.logger.error(f"Pool recovery attempt {attempt + 1} timed out")
-                        if self.pool:
-                            try:
+        # Check if another recovery is already in progress
+        if self.pool_recovering:
+            self.logger.debug("Pool recovery already in progress, waiting...")
+            return
+            
+        try:
+            self.pool_recovering = True
+            max_retries = 3
+            retry_delay = 5  # seconds
+            
+            for attempt in range(max_retries):
+                try:
+                    self.logger.info(f"🔄 Attempting pool recovery (attempt {attempt + 1}/{max_retries})")
+                    
+                    # Try to close existing pool with timeout
+                    if self.pool:
+                        try:
+                            if not self.pool.closed:
                                 self.pool.close()
-                            except:
-                                pass
+                                await asyncio.wait_for(self.pool.wait_closed(), timeout=3.0)
+                            self.logger.debug("Old pool closed successfully")
+                        except asyncio.TimeoutError:
+                            self.logger.warning("Pool close timeout, forcing cleanup")
+                        except Exception as e:
+                            self.logger.warning(f"Error closing old pool: {e}")
+                        finally:
                             self.pool = None
-                    except Exception as e:
-                        self.logger.error(f"Pool recovery error on attempt {attempt + 1}: {e}")
+                    
+                    # Wait before creating new pool (reduced delay)
+                    if attempt > 0:
+                        await asyncio.sleep(2)  # Reduced from 5 to 2 seconds
+                    
+                    # Recreate pool with timeout
+                    self.logger.debug("Creating new connection pool...")
+                    self.pool = await asyncio.wait_for(
+                        aiomysql.create_pool(
+                            host=self.host,
+                            port=self.port,
+                            user=self.user,
+                            password=self.password,
+                            db=self.database,
+                            charset=self.charset,
+                            minsize=self.minsize,
+                            maxsize=self.maxsize,
+                            pool_recycle=self.pool_recycle,
+                            connect_timeout=self.connect_timeout,
+                            autocommit=True
+                        ),
+                        timeout=10.0
+                    )
+                    
+                    # Test recovered pool with timeout
+                    if await asyncio.wait_for(self._test_pool_health(), timeout=5.0):
+                        self.logger.info(f"✅ Pool recovery successful on attempt {attempt + 1}")
+                        # Re-warm the pool with timeout
+                        try:
+                            await asyncio.wait_for(self._warmup_pool(), timeout=5.0)
+                        except asyncio.TimeoutError:
+                            self.logger.warning("Pool warmup timeout, but recovery successful")
+                        return
+                    else:
+                        self.logger.warning(f"❌ Pool recovery health check failed on attempt {attempt + 1}")
                         
-                        # Clean up failed pool
-                        if self.pool:
-                            try:
-                                self.pool.close()
-                                await asyncio.wait_for(self.pool.wait_closed(), timeout=2.0)
-                            except Exception:
-                                pass
-                            finally:
-                                self.pool = None
-                
-                # All recovery attempts failed
-                self.logger.error("❌ Pool recovery failed after all attempts")
-                self.pool = None
-                
-            finally:
-                self.pool_recovering = False
+                except asyncio.TimeoutError:
+                    self.logger.error(f"Pool recovery attempt {attempt + 1} timed out")
+                    if self.pool:
+                        try:
+                            self.pool.close()
+                        except:
+                            pass
+                        self.pool = None
+                except Exception as e:
+                    self.logger.error(f"Pool recovery error on attempt {attempt + 1}: {e}")
+                    
+                    # Clean up failed pool
+                    if self.pool:
+                        try:
+                            self.pool.close()
+                            await asyncio.wait_for(self.pool.wait_closed(), timeout=2.0)
+                        except Exception:
+                            pass
+                        finally:
+                            self.pool = None
+            
+            # All recovery attempts failed
+            self.logger.error("❌ Pool recovery failed after all attempts")
+            self.pool = None
+            
+        finally:
+            self.pool_recovering = False
     
     async def _recover_pool_with_lock(self):
         """🔧 FIX: Recovery method that uses the new recovery lock to prevent races"""
@@ -1221,7 +1037,9 @@ class DorisConnectionManager:
                 if raw_conn.closed:
                     # Return connection and raise error
                     try:
-                        self.pool.release(raw_conn)
+                        #即使连接标记为关闭，但底层资源可能没有完全释放， ensure_closed() 会确保所有资源都被正确清理
+                        #防御性编程 ：避免因连接状态判断不准确导致的资源泄漏
+                        await raw_conn.ensure_closed()
                         # Update connection status to idle
                         async with self._connections_lock:
                             if connection_id in self._all_connections:
@@ -1367,13 +1185,6 @@ class DorisConnectionManager:
                 self.pool_health_check_task.cancel()
                 try:
                     await self.pool_health_check_task
-                except asyncio.CancelledError:
-                    pass
-
-            if self.pool_cleanup_task:
-                self.pool_cleanup_task.cancel()
-                try:
-                    await self.pool_cleanup_task
                 except asyncio.CancelledError:
                     pass
             

@@ -511,50 +511,49 @@ Please generate accurate and efficient SQL queries based on the above requiremen
     async def _get_database_context(self) -> str:
         """Get database context information"""
         try:
-            connection = await self.connection_manager.get_connection("system")
+            async with self.connection_manager.get_connection_context("system") as connection:
+                # Get basic database information
+                db_info_sql = """
+                SELECT
+                    COUNT(*) as table_count,
+                    SUM(table_rows) as total_rows
+                FROM information_schema.tables
+                WHERE table_schema = DATABASE()
+                AND table_type = 'BASE TABLE'
+                """
 
-            # Get basic database information
-            db_info_sql = """
-            SELECT
-                COUNT(*) as table_count,
-                SUM(table_rows) as total_rows
-            FROM information_schema.tables
-            WHERE table_schema = DATABASE()
-            AND table_type = 'BASE TABLE'
-            """
+                auth_context = get_auth_context()
+                db_result = await connection.execute(db_info_sql, auth_context=auth_context)
+                db_info = db_result.data[0] if db_result.data else {}
 
-            auth_context = get_auth_context()
-            db_result = await connection.execute(db_info_sql, auth_context=auth_context)
-            db_info = db_result.data[0] if db_result.data else {}
+                # Get main table list
+                tables_sql = """
+                SELECT
+                    table_name,
+                    table_comment,
+                    table_rows
+                FROM information_schema.tables
+                WHERE table_schema = DATABASE()
+                AND table_type = 'BASE TABLE'
+                ORDER BY table_rows DESC
+                LIMIT 10
+                """
 
-            # Get main table list
-            tables_sql = """
-            SELECT
-                table_name,
-                table_comment,
-                table_rows
-            FROM information_schema.tables
-            WHERE table_schema = DATABASE()
-            AND table_type = 'BASE TABLE'
-            ORDER BY table_rows DESC
-            LIMIT 10
-            """
+                tables_result = await connection.execute(tables_sql, auth_context=auth_context)
 
-            tables_result = await connection.execute(tables_sql, auth_context=auth_context)
-
-            context = f"""Current database statistics:
+                context = f"""Current database statistics:
 - Total number of tables: {db_info.get("table_count", 0)}
 - Total data rows: {db_info.get("total_rows", 0):,}
 
 Main data tables:"""
 
-            for table in tables_result.data:
-                context += f"\n- {table['table_name']}"
-                if table.get("table_comment"):
-                    context += f": {table['table_comment']}"
-                context += f" ({table.get('table_rows', 0):,} rows)"
+                for table in tables_result.data:
+                    context += f"\n- {table['table_name']}"
+                    if table.get("table_comment"):
+                        context += f": {table['table_comment']}"
+                    context += f" ({table.get('table_rows', 0):,} rows)"
 
-            return context
+                return context
 
         except Exception as e:
             return f"Unable to get database context information: {str(e)}"
