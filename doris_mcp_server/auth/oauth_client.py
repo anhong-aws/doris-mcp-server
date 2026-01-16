@@ -262,8 +262,8 @@ class OAuthClient:
             # Start state manager
             await self.state_manager.start()
             
-            # Perform OIDC discovery if configured
-            if self.provider_config.discovery_url:
+            # Perform OIDC discovery if configured with a valid URL
+            if self.provider_config.discovery_url and self.provider_config.discovery_url.strip() and (self.provider_config.discovery_url.startswith('http://') or self.provider_config.discovery_url.startswith('https://')):
                 await self._discover_oidc_endpoints()
             
             logger.info("OAuth client initialization completed")

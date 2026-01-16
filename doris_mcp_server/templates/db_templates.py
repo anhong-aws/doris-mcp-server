@@ -1013,11 +1013,13 @@ DB_MANAGEMENT_PAGE_HTML = """
             }
         }
         
-        // Auto-refresh every 30 seconds
+        // Auto-refresh every 30 seconds - commented out
+        /*
         setInterval(async () => {
             await fetchPoolStatus();
             await fetchAllConnections();
         }, 30000);
+        */
     </script>
 </body>
 </html>

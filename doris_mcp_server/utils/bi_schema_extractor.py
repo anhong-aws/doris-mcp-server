@@ -85,23 +85,12 @@ class MetadataExtractor:
     
     # Removed sync _execute_query_with_catalog; use async variant instead
 
-    async def _execute_query_with_catalog_async(self, query: str, db_name: str = None, catalog_name: str = None):
-        """
-        Async version of _execute_query_with_catalog to avoid cross-event-loop issues.
+    async def _execute_query_with_catalog_async(self, query: str, db_name: str = None):
 
-        When catalog_name is provided and the SQL targets information_schema, we rewrite
-        the SQL to use three-part naming: `{catalog}.information_schema` and execute it
-        via the same running event loop.
-        """
         try:
-            if catalog_name and 'information_schema' in query.lower():
-                modified_query = query.replace('information_schema', f'{catalog_name}.information_schema')
-                logger.info(f"Modified query for catalog {catalog_name}: {modified_query}")
-                return await self._execute_query_async(modified_query, db_name)
-            else:
-                return await self._execute_query_async(query, db_name)
+            return await self._execute_query_async(query, db_name)
         except Exception as e:
-            logger.error(f"Error executing async query with catalog: {str(e)}")
+            logger.error(f"Error executing async query : {str(e)}")
             raise
 
     async def _execute_query_async(self, query: str, db_name: str = None, return_dataframe: bool = False):
@@ -324,8 +313,6 @@ class MetadataExtractor:
     async def exec_query_for_mcp(
         self,
         sql: str,
-        db_name: str = None,
-        catalog_name: str = None,
         max_rows: int = 100,
         timeout: int = 30
     ) -> Dict[str, Any]:
@@ -336,66 +323,20 @@ class MetadataExtractor:
         FIX for Issue #62 Bug 1: Now retrieves auth_context from context variable to support token-bound database configuration
         FIX for Issue #62 Bug 3: Now uses db_name and catalog_name parameters to switch database context
         """
-        logger.info(f"Executing SQL query: {sql}, DB: {db_name}, Catalog: {catalog_name}, MaxRows: {max_rows}, Timeout: {timeout}")
+        logger.info(f"Executing SQL query: {sql}, MaxRows: {max_rows}, Timeout: {timeout}")
 
         try:
             if not sql:
                 return self._format_response(success=False, error="No SQL statement provided", message="Please provide SQL statement to execute")
 
-            
-            logger.debug(f"Using effective parameters - DB: {db_name}, Catalog: {catalog_name}")
-
             # FIX for Issue #62 Bug 3: Build context switching SQL if db_name or catalog_name is specified
             # SECURITY FIX: Validate catalog_name and db_name to prevent SQL injection
+            
+            effective_db = self.db_name
+            # 假如sql中不包含(effective_db加上"."),但包含internal.,则删除internal.
+            if f"{effective_db}." not in sql and "internal." in sql:
+                sql = sql.replace("internal.", "")
             final_sql = sql
-            context_statements = []
-            if catalog_name or db_name:
-                # Validate and sanitize catalog_name
-                if catalog_name:
-                    try:
-                        validate_identifier(catalog_name, "catalog name")
-                    except SQLSecurityError as e:
-                        logger.warning(f"Invalid catalog name rejected: {e}")
-                        return self._format_response(
-                            success=False, 
-                            error=f"Invalid catalog name: {catalog_name}", 
-                            message="Catalog name contains invalid characters"
-                        )
-                    # Use quote_identifier to safely escape the catalog name
-                    # safe_catalog = quote_identifier(effective_catalog, "catalog name")
-                    # context_statements.append(f"USE CATALOG {safe_catalog}")
-                    # logger.debug(f"Switching to catalog: {effective_catalog}")
-
-                # Validate and sanitize db_name
-                if db_name:
-                    try:
-                        validate_identifier(db_name, "database name")
-                    except SQLSecurityError as e:
-                        logger.warning(f"Invalid database name rejected: {e}")
-                        return self._format_response(
-                            success=False, 
-                            error=f"Invalid database name: {db_name}", 
-                            message="Database name contains invalid characters"
-                        )
-                    # Use quote_identifier to safely escape the database name
-                    # safe_db = quote_identifier(effective_db, "database name")
-                    # if effective_catalog:
-                    #     safe_catalog = quote_identifier(effective_catalog, "catalog name")
-                    #     context_statements.append(f"USE {safe_catalog}.{safe_db}")
-                    # else:
-                    #     context_statements.append(f"USE {safe_db}")
-                    # logger.debug(f"Switching to database: {effective_db}")
-
-
-                # Combine context switching with original SQL
-                if context_statements:
-                    # Remove trailing semicolon from context statements if present
-                    context_sql = "; ".join(context_statements)
-                    # Ensure original SQL doesn't start with semicolon
-                    sql_clean = sql.lstrip(";").strip()
-                    final_sql = f"{context_sql}; {sql_clean}"
-                    logger.debug(f"Modified SQL with context switching: {final_sql[:200]}...")
-
             # FIX: Try to get auth_context from context variable (set by HTTP middleware)
             # This allows token-bound database configuration to work
             auth_context = None
@@ -440,7 +381,7 @@ class MetadataExtractor:
         db_name: str = None
     ) -> Dict[str, Any]:
         """Get detailed schema information for specified table (columns, types, comments, etc.) - MCP interface"""
-        logger.info(f"Getting table schema: Table: {table_name}, DB: {db_name}")
+        logger.info(f"Getting table schema: Table: {table_name}, DB: {self.db_name}")
         
         if not table_name:
             return self._format_response(success=False, error="Missing table_name parameter")
@@ -455,17 +396,7 @@ class MetadataExtractor:
                 message="Table name contains invalid characters"
             )
         
-        if db_name:
-            try:
-                validate_identifier(db_name, "database name")
-            except SQLSecurityError as e:
-                return self._format_response(
-                    success=False,
-                    error=f"Invalid database name: {db_name}",
-                    message="Database name contains invalid characters"
-                )
-        
-        effective_db = db_name or self.db_name
+        effective_db = self.db_name
         
         logger.info(f"Using effective parameters - DB: {effective_db}, Table: {table_name}")
         
@@ -485,26 +416,13 @@ class MetadataExtractor:
             return self._format_response(success=False, error=str(e), message="Error occurred while getting table schema")
 
     async def get_db_table_list_for_mcp(
-        self, 
-        db_name: str = None
+        self
     ) -> Dict[str, Any]:
         """Get list of all table names in specified database - MCP interface"""
-        logger.info(f"Getting database table list: DB: {db_name}")
-        
-        # SECURITY: Validate identifiers
-        if db_name:
-            try:
-                validate_identifier(db_name, "database name")
-            except SQLSecurityError as e:
-                return self._format_response(
-                    success=False,
-                    error=f"Invalid database name: {db_name}",
-                    message="Database name contains invalid characters"
-                )
-        
+        logger.info(f"Getting database table list: DB: {self.db_name}")
         
         # Initialize overrides for None or empty values
-        effective_db = db_name or self.db_name
+        effective_db = self.db_name
         
         logger.info(f"Using effective parameters - DB: {effective_db}")
         

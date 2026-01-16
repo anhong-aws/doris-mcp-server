@@ -57,10 +57,6 @@ class DorisToolsManager:
 
 - sql (string) [Required] - SQL statement to execute. MUST use three-part naming for all table references: 'catalog_name.db_name.table_name'. For internal tables use 'internal.db_name.table_name', for external tables use 'catalog_name.db_name.table_name'
 
-- db_name (string) [Optional] - Target database name, defaults to the current database
-
-- catalog_name (string) [Optional] - Reference catalog name for context, defaults to current catalog
-
 - max_rows (integer) [Optional] - Maximum number of rows to return, default 100
 
 - timeout (integer) [Optional] - Query timeout in seconds, default 30
@@ -69,8 +65,6 @@ class DorisToolsManager:
                     "type": "object",
                     "properties": {
                         "sql": {"type": "string", "description": "SQL statement to execute, must use three-part naming"},
-                        "db_name": {"type": "string", "description": "Target database name"},
-                        "catalog_name": {"type": "string", "description": "Catalog name"},
                         "max_rows": {"type": "integer", "description": "Maximum number of rows to return", "default": 100},
                         "timeout": {"type": "integer", "description": "Timeout in seconds", "default": 30},
                     },
@@ -85,14 +79,11 @@ class DorisToolsManager:
 
 - table_name (string) [Required] - Name of the table to query
 
-- db_name (string) [Optional] - Target database name, defaults to the current database
-
 """,
                 inputSchema={
                     "type": "object",
                     "properties": {
                         "table_name": {"type": "string", "description": "Table name"},
-                        "db_name": {"type": "string", "description": "Database name"},
                     },
                     "required": ["table_name"],
                 },
@@ -103,12 +94,10 @@ class DorisToolsManager:
 
 [Parameter Content]:
 
-- db_name (string) [Optional] - Target database name, defaults to the current database
 """,
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "db_name": {"type": "string", "description": "Database name"},
                     },
                 },
             ),
@@ -168,32 +157,28 @@ class DorisToolsManager:
     async def _exec_query_tool(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
         """SQL query execution tool routing (supports federation queries)"""
         sql = arguments.get("sql")
-        db_name = arguments.get("db_name")
-        catalog_name = arguments.get("catalog_name")
         max_rows = arguments.get("max_rows", 100)
         timeout = arguments.get("timeout", 30)
         
         # Delegate to metadata extractor for processing
         return await self.metadata_extractor.exec_query_for_mcp(
-            sql, db_name, catalog_name, max_rows, timeout
+            sql, max_rows, timeout
         )
     
     async def _get_table_schema_tool(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
         """Get table schema tool routing"""
         table_name = arguments.get("table_name")
-        db_name = arguments.get("db_name")
         
         # Delegate to metadata extractor for processing
         return await self.metadata_extractor.get_table_schema_for_mcp(
-            table_name, db_name
+            table_name
         )
     
     async def _get_db_table_list_tool(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
         """Get database table list tool routing"""
-        db_name = arguments.get("db_name")
         
         # Delegate to metadata extractor for processing
-        return await self.metadata_extractor.get_db_table_list_for_mcp(db_name)
+        return await self.metadata_extractor.get_db_table_list_for_mcp()
     
     async def _get_artifact_instructions_tool(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
         """Get artifact instructions tool routing"""
